@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   GraduationCap,
   BookOpen,
@@ -13,35 +14,55 @@ import {
   Sparkles,
   FileText,
   AlertCircle,
-  School,
-  Lock,
+  Play,
+  RotateCcw,
+  Check,
+  Eye,
 } from 'lucide-react';
 import LogoutButton from '@/components/LogoutButton';
 
-interface StudentProfile {
+interface TestItem {
   id: string;
-  username: string;
-  real_name: string;
-  school: string;
-  status: string;
-  must_change_password?: boolean;
+  title: string;
+  subject: string;
+  chapter?: string;
+  total_marks: number;
+  duration_minutes: number;
+  exam_mode: string;
+  question_count: number;
+  student_attempt_status: string;
+  latest_attempt_id: string | null;
+  latest_score: number | null;
+  latest_percentage: number | null;
 }
 
 export default function StudentDashboardPage() {
   const [activeTab, setActiveTab] = useState<'tests' | 'results' | 'history' | 'profile'>('tests');
-  const [student, setStudent] = useState<StudentProfile | null>(null);
+  const [tests, setTests] = useState<TestItem[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const fetchTests = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('/api/student/tests');
+      const data = await res.json();
+      if (data.success) {
+        setTests(data.tests);
+      }
+    } catch (err) {
+      console.error('Failed to load student tests', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    // In a real app we can fetch /api/student/me or use session data
-    fetch('/api/admin/students')
-      .then((res) => res.json())
-      .then((data) => {
-        // Just mock-safe fallbacks if inspecting
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    fetchTests();
   }, []);
+
+  const completedTests = tests.filter(
+    (t) => t.student_attempt_status === 'evaluated' || t.student_attempt_status === 'published'
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -78,7 +99,7 @@ export default function StudentDashboardPage() {
             }`}
           >
             <BookOpen className="w-4 h-4" />
-            Available & Upcoming Tests
+            Available Tests ({tests.length})
           </button>
           <button
             onClick={() => setActiveTab('results')}
@@ -89,7 +110,7 @@ export default function StudentDashboardPage() {
             }`}
           >
             <Award className="w-4 h-4" />
-            My Results
+            My Scorecards ({completedTests.length})
           </button>
           <button
             onClick={() => setActiveTab('history')}
@@ -118,101 +139,189 @@ export default function StudentDashboardPage() {
         {/* TAB 1: AVAILABLE TESTS */}
         {activeTab === 'tests' && (
           <div className="space-y-6">
-            {/* Quick overview alert */}
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <div>
-                <span className="text-[11px] font-bold uppercase tracking-wider bg-white/20 px-2.5 py-0.5 rounded-full">
-                  Exam Session Ready
-                </span>
-                <h2 className="text-xl font-bold mt-2">Ready for your assessments?</h2>
-                <p className="text-blue-100 text-xs mt-1">
-                  Tests will appear here in JEE-style format. Choose between scheduled Chapter Tests and Instant AI Quick Tests.
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-3xl p-6 sm:p-8 text-white shadow-lg shadow-blue-500/10">
+              <span className="text-[11px] font-bold uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full">
+                Interactive Examination Center
+              </span>
+              <h1 className="text-2xl sm:text-3xl font-extrabold mt-3">Welcome to your exam portal</h1>
+              <p className="text-blue-100 text-xs sm:text-sm mt-1 max-w-xl">
+                Take tests in full JEE-style interface with question palette, live countdown timer, and automatic progress saving.
+              </p>
+            </div>
+
+            {loading ? (
+              <div className="bg-white rounded-2xl p-12 text-center text-slate-400 text-xs border border-slate-200">
+                Loading examination papers...
+              </div>
+            ) : tests.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-sm">
+                <BookOpen className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <h3 className="text-base font-bold text-slate-800">No Tests Available Yet</h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                  Your tutor hasn&apos;t published any examinations yet. As soon as a paper is published, it will appear here.
                 </p>
               </div>
-            </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {tests.map((test) => {
+                  const isInProgress = test.student_attempt_status === 'in_progress';
+                  const isPendingReview = test.student_attempt_status === 'pending_review' || test.student_attempt_status === 'submitted';
+                  const isDone = test.student_attempt_status === 'evaluated' || test.student_attempt_status === 'published';
 
-            {/* Test Cards List (Prepared for Phase 3/4 tests) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white rounded-2xl border-2 border-slate-200 p-6 shadow-sm hover:border-blue-400 transition-colors flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-bold border border-blue-200">
-                      Sample Preview
-                    </span>
-                    <span className="text-xs text-slate-400 font-medium flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" />
-                      15 mins
-                    </span>
-                  </div>
-                  <h3 className="text-base font-bold text-slate-900">Physics: Kinematics & Mechanics</h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    10 Marks &bull; MCQ & Numerical &bull; Instant AI Evaluation
-                  </p>
-                </div>
-                <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-xs text-slate-400">JEE Standard Pattern</span>
-                  <button
-                    disabled
-                    className="px-3.5 py-1.5 bg-slate-100 text-slate-400 rounded-xl text-xs font-bold cursor-not-allowed"
-                  >
-                    Phase 4 Exam Interface
-                  </button>
-                </div>
-              </div>
+                  return (
+                    <div
+                      key={test.id}
+                      className="bg-white rounded-2xl border-2 border-slate-200 hover:border-blue-500 p-6 shadow-sm transition-all flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              test.exam_mode === 'teacher_reviewed'
+                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                : 'bg-purple-50 text-purple-700 border border-purple-200'
+                            }`}
+                          >
+                            {test.exam_mode === 'teacher_reviewed' ? 'Teacher-Reviewed (50M)' : 'Instant Quick (10M)'}
+                          </span>
+                          <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5" />
+                            {test.duration_minutes} Mins
+                          </span>
+                        </div>
 
-              <div className="bg-white rounded-2xl border-2 border-slate-200 p-6 shadow-sm hover:border-purple-400 transition-colors flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-700 text-[10px] font-bold border border-purple-200">
-                      Teacher-Reviewed Exam
-                    </span>
-                    <span className="text-xs text-slate-400 font-medium flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" />
-                      60 mins
-                    </span>
-                  </div>
-                  <h3 className="text-base font-bold text-slate-900">Chemistry: Full Syllabus Mock</h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    50 Marks &bull; Teacher Moderated Marking &bull; Anti-Cheat Monitored
-                  </p>
-                </div>
-                <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-xs text-slate-400">PDF to Exam Workflow</span>
-                  <button
-                    disabled
-                    className="px-3.5 py-1.5 bg-slate-100 text-slate-400 rounded-xl text-xs font-bold cursor-not-allowed"
-                  >
-                    Phase 4 Exam Interface
-                  </button>
-                </div>
+                        <h3 className="text-base font-bold text-slate-900">{test.title}</h3>
+                        <p className="text-xs text-slate-500 mt-1">
+                          {test.subject} {test.chapter ? `&bull; ${test.chapter}` : ''}
+                        </p>
+
+                        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-4 text-xs text-slate-600">
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Marks</span>
+                            <span className="font-extrabold text-slate-900">{test.total_marks} Marks</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Questions</span>
+                            <span className="font-extrabold text-slate-900">{test.question_count} Items</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Pattern</span>
+                            <span className="font-extrabold text-slate-900">JEE Standard</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
+                        {isDone ? (
+                          <div className="flex items-center justify-between w-full">
+                            <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
+                              <CheckCircle2 className="w-4 h-4" />
+                              Score: {test.latest_score} / {test.total_marks} ({test.latest_percentage}%)
+                            </span>
+                            <Link
+                              href={`/student/results/${test.latest_attempt_id}`}
+                              className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-1"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              View Scorecard
+                            </Link>
+                          </div>
+                        ) : isPendingReview ? (
+                          <div className="flex items-center justify-between w-full">
+                            <span className="text-xs font-bold text-amber-600 flex items-center gap-1">
+                              <Clock className="w-4 h-4" />
+                              Submitted &bull; Awaiting Review
+                            </span>
+                            <Link
+                              href={`/student/submitted?attempt_id=${test.latest_attempt_id}`}
+                              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold"
+                            >
+                              Check Status
+                            </Link>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between w-full">
+                            <span className="text-xs text-slate-400">
+                              {isInProgress ? 'Attempt in progress' : 'Ready to start'}
+                            </span>
+                            <Link
+                              href={`/student/exam/${test.id}`}
+                              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-500/20 transition-all flex items-center gap-1.5"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" />
+                              {isInProgress ? 'Resume Exam' : 'Start Exam'}
+                            </Link>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* TAB 2: MY RESULTS */}
+        {/* TAB 2: MY SCORECARDS */}
         {activeTab === 'results' && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm text-center">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-4">
-              <Award className="w-6 h-6" />
+          <div className="space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+              <h2 className="text-base font-bold text-slate-900">My Released Exam Scorecards</h2>
+              <span className="text-xs text-slate-500">{completedTests.length} tests evaluated</span>
             </div>
-            <h3 className="text-base font-bold text-slate-900">Published Results & Scorecards</h3>
-            <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 leading-relaxed">
-              Once you submit an exam, instant 10-mark tests will display their breakdown immediately, while 50-mark exams will be published once reviewed by your teacher.
-            </p>
+
+            {completedTests.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-sm">
+                <Award className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <h3 className="text-base font-bold text-slate-800">No Published Scorecards Yet</h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                  Attempt an exam and submit it to see your marks, percentage, and detailed answer reviews here.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {completedTests.map((t) => (
+                  <div
+                    key={t.id}
+                    className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-blue-400 transition-colors"
+                  >
+                    <div>
+                      <h3 className="font-bold text-sm text-slate-900">{t.title}</h3>
+                      <p className="text-xs text-slate-500">
+                        {t.subject} &bull; Marks: {t.latest_score} / {t.total_marks} ({t.latest_percentage}%)
+                      </p>
+                    </div>
+                    <Link
+                      href={`/student/results/${t.latest_attempt_id}`}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      View Solution
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {/* TAB 3: TEST HISTORY */}
         {activeTab === 'history' && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm text-center">
-            <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto mb-4">
-              <History className="w-6 h-6" />
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+            <h2 className="text-base font-bold text-slate-900 mb-4">Complete Attempt History</h2>
+            <div className="divide-y divide-slate-100 text-xs">
+              {tests.map((t) => (
+                <div key={t.id} className="py-3 flex items-center justify-between">
+                  <div>
+                    <p className="font-bold text-slate-800">{t.title}</p>
+                    <p className="text-[11px] text-slate-400">{t.subject} &bull; {t.duration_minutes} Mins</p>
+                  </div>
+                  <span className="font-bold capitalize text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg">
+                    {t.student_attempt_status.replace('_', ' ')}
+                  </span>
+                </div>
+              ))}
             </div>
-            <h3 className="text-base font-bold text-slate-900">Submission History</h3>
-            <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-              All previous exam attempts, timestamps, and answer reviews will be archived here.
-            </p>
           </div>
         )}
 
@@ -225,7 +334,7 @@ export default function StudentDashboardPage() {
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900">Student Profile</h3>
-                <p className="text-xs text-slate-500">Account details and school affiliation</p>
+                <p className="text-xs text-slate-500">Academic account credentials and school details</p>
               </div>
             </div>
 
@@ -235,12 +344,12 @@ export default function StudentDashboardPage() {
                 <span className="font-bold text-blue-600 uppercase">Student</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-xl flex justify-between">
-                <span className="font-semibold text-slate-500">Account Status</span>
-                <span className="font-bold text-emerald-600">Active</span>
+                <span className="font-semibold text-slate-500">Security Setting</span>
+                <span className="font-bold text-emerald-600">Zero-Email Simple Login Active</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-xl flex justify-between">
-                <span className="font-semibold text-slate-500">Security</span>
-                <span className="font-bold text-slate-700">Encrypted Credentials</span>
+                <span className="font-semibold text-slate-500">Test Integrity Protection</span>
+                <span className="font-bold text-purple-600">Active</span>
               </div>
             </div>
           </div>

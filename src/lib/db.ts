@@ -144,12 +144,12 @@ function executeLocalQuery<T = any>(sql: string, params: any[] = []): { rows: T[
 
     if (cleanSql.includes('from test_attempts')) {
       let filtered = [...db.test_attempts];
-      if (cleanSql.includes('where student_id = $1')) {
+      if (cleanSql.includes('where id = $1')) {
+        filtered = filtered.filter(a => a.id === params[0]);
+      } else if (cleanSql.includes('where student_id = $1')) {
         filtered = filtered.filter(a => a.student_id === params[0]);
       } else if (cleanSql.includes('where test_id = $1')) {
         filtered = filtered.filter(a => a.test_id === params[0]);
-      } else if (cleanSql.includes('where status = $1')) {
-        filtered = filtered.filter(a => a.status === params[0]);
       }
       return { rows: filtered as unknown as T[], rowCount: filtered.length };
     }
@@ -207,7 +207,7 @@ function executeLocalQuery<T = any>(sql: string, params: any[] = []): { rows: T[
 }
 
 // ---------------------------------------------------------------------------
-// High-Level Data Access Methods (Used by API Routes and Server Components)
+// High-Level Data Access Methods
 // ---------------------------------------------------------------------------
 
 export async function getStudentsList(searchTerm = '', statusFilter = 'all') {
@@ -228,7 +228,6 @@ export async function getStudentsList(searchTerm = '', statusFilter = 'all') {
     );
   }
 
-  // Calculate test attempts and stats for each student
   return students.map(s => {
     const attempts = db.test_attempts.filter(a => a.student_id === s.id);
     const completedAttempts = attempts.filter(a => a.status === 'published' || a.status === 'evaluated');
@@ -300,7 +299,6 @@ export async function getActivityLogsList(options: {
     logs = logs.filter(l => l.event_type === options.eventType);
   }
 
-  // Populate user data
   const enriched = logs.map(l => {
     const user = db.users.find(u => u.id === l.user_id);
     return {
@@ -350,4 +348,211 @@ export async function getDashboardMetrics() {
     pendingReviews: pendingReviews.length,
     totalAttempts,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Examination & Attempt Operations (Phase 4, 5, 6, 7)
+// ---------------------------------------------------------------------------
+
+export async function getAvailableTestsForStudent(studentId: string) {
+  const db = readLocalDB();
+  // Return tests that are published or active
+  const tests = db.tests.filter(t => t.status === 'published' || t.status === 'active');
+
+  return tests.map(t => {
+    const questions = db.questions.filter(q => q.test_id === t.id);
+    const studentAttempts = db.test_attempts.filter(a => a.test_id === t.id && a.student_id === studentId);
+    const latestAttempt = studentAttempts.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0];
+
+    return {
+      id: t.id,
+      title: t.title,
+      subject: t.subject,
+      chapter: t.chapter,
+      topic: t.topic,
+      class_grade: t.class_grade,
+      description: t.description,
+      instructions: t.instructions,
+      total_marks: t.total_marks,
+      duration_minutes: t.duration_minutes,
+      exam_mode: t.exam_mode,
+      question_count: questions.length,
+      negative_marking_enabled: t.negative_marking_enabled,
+      anti_cheat_settings: t.anti_cheat_settings,
+      student_attempt_status: latestAttempt ? latestAttempt.status : 'not_started',
+      latest_attempt_id: latestAttempt ? latestAttempt.id : null,
+      latest_score: latestAttempt && (latestAttempt.status === 'published' || latestAttempt.status === 'evaluated') ? latestAttempt.final_score : null,
+      latest_percentage: latestAttempt && (latestAttempt.status === 'published' || latestAttempt.status === 'evaluated') ? latestAttempt.percentage : null,
+    };
+  });
+}
+
+/**
+ * Loads test questions for the live examination.
+ * STRICT SECURITY: Never returns is_correct, explanation, or numerical_answer to student!
+ */
+export async function getExamQuestionsForStudent(testId: string) {
+  const db = readLocalDB();
+  const test = db.tests.find(t => t.id === testId);
+  if (!test) return null;
+
+  const rawQuestions = db.questions
+    .filter(q => q.test_id === testId)
+    .sort((a, b) => a.order_index - b.order_index);
+
+  const sanitizedQuestions = rawQuestions.map((q, idx) => {
+    const rawOptions = db.question_options
+      .filter(o => o.question_id === q.id)
+      .sort((a, b) => a.order_index - b.order_index);
+
+    // Sanitize options: remove is_correct
+    const options = rawOptions.map(o => ({
+      id: o.id,
+      option_letter: o.option_letter,
+      option_text: o.option_text,
+      image_url: o.image_url,
+    }));
+
+    return {
+      id: q.id,
+      question_number: idx + 1,
+      question_text: q.question_text,
+      question_type: q.question_type,
+      marks: q.marks,
+      negative_marks: q.negative_marks,
+      image_url: q.image_url,
+      options,
+    };
+  });
+
+  return {
+    test: {
+      id: test.id,
+      title: test.title,
+      subject: test.subject,
+      chapter: test.chapter,
+      instructions: test.instructions,
+      total_marks: test.total_marks,
+      duration_minutes: test.duration_minutes,
+      exam_mode: test.exam_mode,
+      negative_marking_enabled: test.negative_marking_enabled,
+      anti_cheat_settings: test.anti_cheat_settings,
+    },
+    questions: sanitizedQuestions,
+  };
+}
+
+export async function startOrCreateExamAttempt(studentId: string, testId: string) {
+  const db = readLocalDB();
+  const test = db.tests.find(t => t.id === testId);
+  if (!test) return null;
+
+  // Check if an attempt is currently in progress
+  let attempt = db.test_attempts.find(
+    a => a.test_id === testId && a.student_id === studentId && a.status === 'in_progress'
+  );
+
+  if (!attempt) {
+    const attemptId = crypto.randomUUID();
+    const prevCount = db.test_attempts.filter(a => a.test_id === testId && a.student_id === studentId).length;
+
+    attempt = {
+      id: attemptId,
+      test_id: testId,
+      student_id: studentId,
+      attempt_number: prevCount + 1,
+      status: 'in_progress',
+      started_at: new Date().toISOString(),
+      submitted_at: null,
+      time_spent_seconds: 0,
+      total_marks_possible: test.total_marks,
+      provisional_academic_score: 0,
+      teacher_adjusted_score: null,
+      integrity_deduction: 0,
+      final_score: 0,
+      percentage: 0,
+      is_auto_submitted: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    db.test_attempts.push(attempt);
+    writeLocalDB(db);
+  }
+
+  // Fetch any existing saved responses for this attempt
+  const existingResponses = db.student_responses.filter(r => r.attempt_id === attempt.id);
+
+  return {
+    attempt,
+    responses: existingResponses,
+  };
+}
+
+export async function saveSingleStudentResponse(
+  attemptId: string,
+  questionId: string,
+  data: {
+    selected_options?: any;
+    numerical_response?: number | null;
+    text_response?: string;
+    is_visited?: boolean;
+    is_marked_for_review?: boolean;
+    is_answered?: boolean;
+  }
+) {
+  const db = readLocalDB();
+  let resp = db.student_responses.find(r => r.attempt_id === attemptId && r.question_id === questionId);
+
+  if (!resp) {
+    resp = {
+      id: crypto.randomUUID(),
+      attempt_id: attemptId,
+      question_id: questionId,
+      selected_options: data.selected_options ?? null,
+      numerical_response: data.numerical_response ?? null,
+      text_response: data.text_response ?? '',
+      is_visited: data.is_visited ?? true,
+      is_marked_for_review: data.is_marked_for_review ?? false,
+      is_answered: data.is_answered ?? false,
+      marks_awarded: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    db.student_responses.push(resp);
+  } else {
+    if (data.selected_options !== undefined) resp.selected_options = data.selected_options;
+    if (data.numerical_response !== undefined) resp.numerical_response = data.numerical_response;
+    if (data.text_response !== undefined) resp.text_response = data.text_response;
+    if (data.is_visited !== undefined) resp.is_visited = data.is_visited;
+    if (data.is_marked_for_review !== undefined) resp.is_marked_for_review = data.is_marked_for_review;
+    if (data.is_answered !== undefined) resp.is_answered = data.is_answered;
+    resp.updated_at = new Date().toISOString();
+  }
+
+  writeLocalDB(db);
+  return resp;
+}
+
+export async function logIntegrityEvent(
+  attemptId: string,
+  studentId: string,
+  testId: string,
+  eventType: string,
+  durationSeconds = 0,
+  metadata: Record<string, any> = {}
+) {
+  const db = readLocalDB();
+  const event = {
+    id: crypto.randomUUID(),
+    attempt_id: attemptId,
+    student_id: studentId,
+    test_id: testId,
+    event_type: eventType,
+    duration_seconds: durationSeconds,
+    metadata,
+    timestamp: new Date().toISOString(),
+  };
+  db.integrity_events.push(event);
+  writeLocalDB(db);
+  return event;
 }
