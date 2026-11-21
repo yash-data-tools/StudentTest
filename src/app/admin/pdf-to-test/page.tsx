@@ -23,6 +23,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  RotateCcw,
 } from 'lucide-react';
 import { ExtractedQuestion, ParsedExamData } from '@/lib/pdf-parser';
 
@@ -60,6 +61,13 @@ export default function PdfToTestPage() {
     setError(null);
   };
 
+  const resetUpload = () => {
+    setFile(null);
+    setExamData(null);
+    setError(null);
+    setSuccessMessage(null);
+  };
+
   const handleUploadAndExtract = async () => {
     if (!file) return;
     setExtracting(true);
@@ -78,6 +86,9 @@ export default function PdfToTestPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to extract questions.');
 
       setExamData(data.examData);
+      if (data.examData && data.examData.questions && data.examData.questions.length === 0) {
+        setError(data.examData.warning || '0 questions were detected in this document. You can retry extraction or add questions manually.');
+      }
     } catch (err: any) {
       setError(err.message || 'An error occurred during extraction.');
     } finally {
@@ -211,6 +222,10 @@ export default function PdfToTestPage() {
   // Save or Publish Test
   const handleSaveTest = async (status: 'draft' | 'published') => {
     if (!examData) return;
+    if (!examData.questions || examData.questions.length === 0) {
+      setError('Cannot save or publish an exam with 0 questions. Please add at least one question first.');
+      return;
+    }
     setSaving(true);
     setError(null);
     setSuccessMessage(null);
@@ -253,8 +268,15 @@ export default function PdfToTestPage() {
         {examData && (
           <div className="flex items-center gap-2">
             <button
+              onClick={resetUpload}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold shadow-sm transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4 text-slate-500" />
+              Upload Different PDF
+            </button>
+            <button
               onClick={() => handleSaveTest('draft')}
-              disabled={saving}
+              disabled={saving || examData.questions.length === 0}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold shadow-sm transition-colors cursor-pointer disabled:opacity-50"
             >
               <Save className="w-4 h-4 text-slate-500" />
@@ -262,7 +284,7 @@ export default function PdfToTestPage() {
             </button>
             <button
               onClick={() => handleSaveTest('published')}
-              disabled={saving}
+              disabled={saving || examData.questions.length === 0}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer disabled:opacity-50"
             >
               <Send className="w-4 h-4" />
@@ -335,7 +357,7 @@ export default function PdfToTestPage() {
           )}
 
           {file && (
-            <div>
+            <div className="space-y-4">
               <button
                 type="button"
                 onClick={handleUploadAndExtract}
@@ -354,6 +376,20 @@ export default function PdfToTestPage() {
                   </>
                 )}
               </button>
+
+              {extracting && (
+                <div className="max-w-md mx-auto p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-left space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-900">
+                    <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                    Analyzing Question Paper...
+                  </div>
+                  <ul className="text-[11px] text-indigo-700 space-y-1 list-disc list-inside">
+                    <li>Reading PDF structure and extracting selectable text</li>
+                    <li>Analyzing diagrams, formulas, equations, and numbering</li>
+                    <li>Structuring MCQs, numericals, and subjective questions</li>
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -445,6 +481,101 @@ export default function PdfToTestPage() {
                   />
                 </div>
               </div>
+
+              {/* Zero Questions State */}
+              {examData.questions.length === 0 && (
+                <div className="bg-amber-50 rounded-2xl border-2 border-amber-300 p-6 sm:p-8 text-center space-y-4">
+                  <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+                    <AlertCircle className="w-6 h-6" />
+                  </div>
+                  <div className="max-w-xl mx-auto space-y-1.5">
+                    <h3 className="text-base font-extrabold text-amber-950">
+                      Question Editor (0) — No Questions Extracted
+                    </h3>
+                    <p className="text-xs text-amber-800 leading-relaxed">
+                      {examData.warning ||
+                        'No readable questions were detected in this document. This may occur if the PDF is an unreadable scan or formatted without identifiable question numbers.'}
+                    </p>
+                    {examData.ai_error_details && (
+                      <div className="text-[11px] font-mono text-amber-900 bg-amber-100/80 p-2.5 rounded-xl text-left border border-amber-200">
+                        <span className="font-bold">AI Diagnostic Note:</span> {examData.ai_error_details}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleUploadAndExtract}
+                      disabled={extracting}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      Retry Extraction
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetUpload}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                    >
+                      <FileUp className="w-4 h-4" />
+                      Upload Another PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={addNewQuestion}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Question Manually
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Extraction Success Banner */}
+              {examData.questions.length > 0 && (
+                <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-indigo-600 flex-shrink-0" />
+                    <div>
+                      <span className="font-bold text-slate-900">
+                        Extracted {examData.questions.length} questions from source PDF
+                      </span>
+                      <span className="text-slate-500 ml-1.5">
+                        via{' '}
+                        {examData.extraction_method === 'gemini_multimodal'
+                          ? 'Gemini Multimodal AI'
+                          : 'Deterministic Source Parser'}
+                        {examData.diagnostics?.gemini_model_used
+                          ? ` (${examData.diagnostics.gemini_model_used})`
+                          : ''}
+                      </span>
+                      {examData.warning && (
+                        <p className="text-[11px] text-amber-700 mt-0.5">{examData.warning}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={addNewQuestion}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Question
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetUpload}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                    >
+                      <FileUp className="w-3.5 h-3.5" />
+                      New PDF
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Questions List */}
               <div className="space-y-4">
