@@ -2,7 +2,6 @@ import { Pool } from 'pg';
 import fs from 'fs';
 import path from 'path';
 
-// PostgreSQL Pool instance (singleton)
 let pool: Pool | null = null;
 
 const hasPostgres = Boolean(
@@ -27,11 +26,10 @@ export function getPgPool(): Pool | null {
   }
 }
 
-// Local File Store for Instant Zero-Config Execution & Offline Resilience
 const DATA_DIR = path.join(process.cwd(), '.data');
 const DB_FILE = path.join(DATA_DIR, 'local_db.json');
 
-interface LocalDB {
+export interface LocalDB {
   users: any[];
   system_settings: any[];
   tests: any[];
@@ -89,9 +87,6 @@ export function writeLocalDB(data: LocalDB): void {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
 }
 
-/**
- * Executes a query with automatic fallback to local store if PostgreSQL is unreachable or unconfigured
- */
 export async function query<T = any>(text: string, params: any[] = []): Promise<{ rows: T[]; rowCount: number }> {
   const p = getPgPool();
   if (p && hasPostgres) {
@@ -103,20 +98,15 @@ export async function query<T = any>(text: string, params: any[] = []): Promise<
     }
   }
 
-  // If Postgres is not set or failed, execute via the resilient local query engine
   return executeLocalQuery<T>(text, params);
 }
 
-/**
- * Lightweight SQL-like emulator for key operations (CRUD on users, tests, questions, attempts, logs)
- */
 function executeLocalQuery<T = any>(sql: string, params: any[] = []): { rows: T[]; rowCount: number } {
   const db = readLocalDB();
   const cleanSql = sql.trim().toLowerCase();
 
   // 1. SELECT queries
   if (cleanSql.startsWith('select')) {
-    // SELECT * FROM users WHERE username = $1
     if (cleanSql.includes('from users')) {
       let filtered = [...db.users];
       if (cleanSql.includes('where username = $1')) {
@@ -141,6 +131,8 @@ function executeLocalQuery<T = any>(sql: string, params: any[] = []): { rows: T[
       let filtered = [...db.tests];
       if (cleanSql.includes('where id = $1')) {
         filtered = filtered.filter(t => t.id === params[0]);
+      } else if (cleanSql.includes('where status = $1')) {
+        filtered = filtered.filter(t => t.status === params[0]);
       }
       return { rows: filtered as unknown as T[], rowCount: filtered.length };
     }
@@ -148,6 +140,18 @@ function executeLocalQuery<T = any>(sql: string, params: any[] = []): { rows: T[
     if (cleanSql.includes('from activity_logs')) {
       const sorted = [...db.activity_logs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       return { rows: sorted as unknown as T[], rowCount: sorted.length };
+    }
+
+    if (cleanSql.includes('from test_attempts')) {
+      let filtered = [...db.test_attempts];
+      if (cleanSql.includes('where student_id = $1')) {
+        filtered = filtered.filter(a => a.student_id === params[0]);
+      } else if (cleanSql.includes('where test_id = $1')) {
+        filtered = filtered.filter(a => a.test_id === params[0]);
+      } else if (cleanSql.includes('where status = $1')) {
+        filtered = filtered.filter(a => a.status === params[0]);
+      }
+      return { rows: filtered as unknown as T[], rowCount: filtered.length };
     }
   }
 
@@ -200,4 +204,150 @@ function executeLocalQuery<T = any>(sql: string, params: any[] = []): { rows: T[
   }
 
   return { rows: [], rowCount: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// High-Level Data Access Methods (Used by API Routes and Server Components)
+// ---------------------------------------------------------------------------
+
+export async function getStudentsList(searchTerm = '', statusFilter = 'all') {
+  const db = readLocalDB();
+  let students = db.users.filter(u => u.role === 'student');
+
+  if (statusFilter !== 'all') {
+    students = students.filter(s => s.status === statusFilter);
+  }
+
+  if (searchTerm.trim()) {
+    const term = searchTerm.toLowerCase();
+    students = students.filter(
+      s =>
+        s.real_name.toLowerCase().includes(term) ||
+        s.username.toLowerCase().includes(term) ||
+        (s.school && s.school.toLowerCase().includes(term))
+    );
+  }
+
+  // Calculate test attempts and stats for each student
+  return students.map(s => {
+    const attempts = db.test_attempts.filter(a => a.student_id === s.id);
+    const completedAttempts = attempts.filter(a => a.status === 'published' || a.status === 'evaluated');
+    const avgScore =
+      completedAttempts.length > 0
+        ? Math.round(completedAttempts.reduce((acc, curr) => acc + (Number(curr.percentage) || 0), 0) / completedAttempts.length)
+        : null;
+
+    return {
+      id: s.id,
+      username: s.username,
+      real_name: s.real_name,
+      school: s.school,
+      status: s.status,
+      must_change_password: s.must_change_password || false,
+      created_at: s.created_at,
+      last_login_at: s.last_login_at,
+      total_attempts: attempts.length,
+      average_score: avgScore,
+    };
+  });
+}
+
+export async function updateStudentDetails(
+  id: string,
+  data: { real_name?: string; school?: string; status?: string; must_change_password?: boolean }
+) {
+  const db = readLocalDB();
+  const user = db.users.find(u => u.id === id && u.role === 'student');
+  if (!user) return null;
+
+  if (data.real_name !== undefined) user.real_name = data.real_name.trim();
+  if (data.school !== undefined) user.school = data.school.trim();
+  if (data.status !== undefined) user.status = data.status;
+  if (data.must_change_password !== undefined) user.must_change_password = data.must_change_password;
+  user.updated_at = new Date().toISOString();
+
+  writeLocalDB(db);
+  return user;
+}
+
+export async function updateStudentPassword(id: string, passwordHash: string, forceChange = false) {
+  const db = readLocalDB();
+  const user = db.users.find(u => u.id === id && u.role === 'student');
+  if (!user) return null;
+
+  user.password_hash = passwordHash;
+  user.must_change_password = forceChange;
+  user.updated_at = new Date().toISOString();
+
+  writeLocalDB(db);
+  return user;
+}
+
+export async function getActivityLogsList(options: {
+  userId?: string;
+  eventType?: string;
+  searchTerm?: string;
+  limit?: number;
+} = {}) {
+  const db = readLocalDB();
+  let logs = [...db.activity_logs];
+
+  if (options.userId) {
+    logs = logs.filter(l => l.user_id === options.userId);
+  }
+
+  if (options.eventType && options.eventType !== 'all') {
+    logs = logs.filter(l => l.event_type === options.eventType);
+  }
+
+  // Populate user data
+  const enriched = logs.map(l => {
+    const user = db.users.find(u => u.id === l.user_id);
+    return {
+      id: l.id,
+      user_id: l.user_id,
+      student_name: user?.real_name || 'System / Anonymous',
+      username: user?.username || 'system',
+      school: user?.school || '-',
+      role: user?.role || 'system',
+      event_type: l.event_type,
+      metadata: l.metadata || {},
+      timestamp: l.timestamp,
+    };
+  });
+
+  if (options.searchTerm?.trim()) {
+    const term = options.searchTerm.toLowerCase();
+    return enriched
+      .filter(
+        l =>
+          l.student_name.toLowerCase().includes(term) ||
+          l.username.toLowerCase().includes(term) ||
+          l.event_type.toLowerCase().includes(term)
+      )
+      .slice(0, options.limit || 100);
+  }
+
+  return enriched
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, options.limit || 100);
+}
+
+export async function getDashboardMetrics() {
+  const db = readLocalDB();
+  const students = db.users.filter(u => u.role === 'student');
+  const activeStudents = students.filter(s => s.status === 'active');
+  const pendingApproval = students.filter(s => s.status === 'pending_approval');
+  const publishedTests = db.tests.filter(t => t.status === 'published' || t.status === 'active');
+  const pendingReviews = db.test_attempts.filter(a => a.status === 'pending_review' || a.status === 'submitted');
+  const totalAttempts = db.test_attempts.length;
+
+  return {
+    totalStudents: students.length,
+    activeStudents: activeStudents.length,
+    pendingApprovalStudents: pendingApproval.length,
+    publishedTests: publishedTests.length,
+    pendingReviews: pendingReviews.length,
+    totalAttempts,
+  };
 }
