@@ -10,7 +10,17 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { subject, chapter, topic, class_grade, difficulty, total_marks, duration_minutes, negative_marking } = body;
+    const {
+      subject,
+      chapter,
+      topic,
+      class_grade,
+      difficulty,
+      total_marks,
+      number_of_questions,
+      duration_minutes,
+      negative_marking,
+    } = body;
 
     if (!subject || !chapter) {
       return NextResponse.json({ error: 'Subject and Chapter are required.' }, { status: 400 });
@@ -23,6 +33,7 @@ export async function POST(req: NextRequest) {
       class_grade,
       difficulty: difficulty || 'mixed',
       total_marks: Number(total_marks) || 10,
+      number_of_questions: Number(number_of_questions) || 5,
       duration_minutes: Number(duration_minutes) || 15,
       negative_marking: Boolean(negative_marking),
     });

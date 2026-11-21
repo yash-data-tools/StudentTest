@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Sparkles,
-  Brain,
   Clock,
   Award,
   Layers,
@@ -14,8 +13,9 @@ import {
   Trash2,
   Plus,
   Send,
-  Save,
   RotateCcw,
+  Sliders,
+  ListOrdered,
 } from 'lucide-react';
 import { GeneratedQuestion } from '@/lib/ai-services';
 
@@ -23,13 +23,14 @@ export default function AiQuickTestGeneratorPage() {
   const router = useRouter();
 
   // Generator form state
-  const [subject, setSubject] = useState('Chemistry');
-  const [chapter, setChapter] = useState('Atomic Structure');
-  const [topic, setTopic] = useState('Bohr Model, Quantum Numbers & Electronic Configuration');
+  const [subject, setSubject] = useState('Physics');
+  const [chapter, setChapter] = useState('Laws of Motion & Work-Energy');
+  const [topic, setTopic] = useState('Newton Laws, Momentum, Friction & Kinetic Energy');
   const [classGrade, setClassGrade] = useState('Class 11');
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard' | 'mixed'>('mixed');
-  const [totalMarks, setTotalMarks] = useState(10);
-  const [duration, setDuration] = useState(15);
+  const [totalMarks, setTotalMarks] = useState(20);
+  const [numberOfQuestions, setNumberOfQuestions] = useState(5);
+  const [duration, setDuration] = useState(25);
   const [negativeMarking, setNegativeMarking] = useState(true);
 
   // Workflow state
@@ -55,8 +56,9 @@ export default function AiQuickTestGeneratorPage() {
           topic,
           class_grade: classGrade,
           difficulty,
-          total_marks: totalMarks,
-          duration_minutes: duration,
+          total_marks: Number(totalMarks),
+          number_of_questions: Number(numberOfQuestions),
+          duration_minutes: Number(duration),
           negative_marking: negativeMarking,
         }),
       });
@@ -129,13 +131,13 @@ export default function AiQuickTestGeneratorPage() {
       <div>
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-50 border border-purple-200 text-purple-700 text-xs font-bold uppercase tracking-wider mb-2">
           <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-          AI Quick Test Generator (10 Marks)
+          AI Test Generator &bull; Complete Tutor Customization
         </div>
         <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-          Instant 10-Mark Topic Test
+          Custom AI Test Generator
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 mt-1">
-          Pick a chapter or topic and let AI synthesize a balanced 10-mark examination with automatic instant scorecards for students.
+          Full control: specify the exact number of questions, total marks, chapter, difficulty, and duration.
         </p>
       </div>
 
@@ -156,7 +158,7 @@ export default function AiQuickTestGeneratorPage() {
       {/* GENERATOR CONTROLS FORM */}
       {!generatedTest && (
         <form onSubmit={handleGenerate} className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-sm space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 text-xs">
             <div>
               <label className="block font-bold uppercase text-slate-700 mb-1.5">Subject</label>
               <select
@@ -187,11 +189,25 @@ export default function AiQuickTestGeneratorPage() {
             </div>
 
             <div>
+              <label className="block font-bold uppercase text-slate-700 mb-1.5">Difficulty Level</label>
+              <select
+                value={difficulty}
+                onChange={(e) => setDifficulty(e.target.value as any)}
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium"
+              >
+                <option value="easy">Easy (Foundational)</option>
+                <option value="medium">Medium (Standard)</option>
+                <option value="hard">Hard (Advanced)</option>
+                <option value="mixed">Mixed (Recommended)</option>
+              </select>
+            </div>
+
+            <div className="sm:col-span-2">
               <label className="block font-bold uppercase text-slate-700 mb-1.5">Chapter Name</label>
               <input
                 type="text"
                 required
-                placeholder="e.g. Atomic Structure, Kinematics, Thermodynamics"
+                placeholder="e.g. Laws of Motion, Work Energy, Thermodynamics"
                 value={chapter}
                 onChange={(e) => setChapter(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-semibold"
@@ -202,35 +218,63 @@ export default function AiQuickTestGeneratorPage() {
               <label className="block font-bold uppercase text-slate-700 mb-1.5">Specific Topic (Optional)</label>
               <input
                 type="text"
-                placeholder="e.g. Bohr Model, Quantum Numbers"
+                placeholder="e.g. Friction, Kinetic Friction"
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl"
               />
             </div>
 
-            <div>
-              <label className="block font-bold uppercase text-slate-700 mb-1.5">Difficulty Level</label>
-              <select
-                value={difficulty}
-                onChange={(e) => setDifficulty(e.target.value as any)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium"
-              >
-                <option value="easy">Easy (Foundational)</option>
-                <option value="medium">Medium (Standard Level)</option>
-                <option value="hard">Hard (Advanced / Challenging)</option>
-                <option value="mixed">Mixed (Recommended)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-bold uppercase text-slate-700 mb-1.5">Total Marks</label>
+            {/* FULL ADMIN CONTROL OVER QUESTION COUNT & MARKS */}
+            <div className="p-4 bg-purple-50/60 rounded-xl border border-purple-200">
+              <label className="block font-bold uppercase text-purple-900 mb-1 flex items-center gap-1.5">
+                <ListOrdered className="w-4 h-4 text-purple-700" />
+                Number of Questions
+              </label>
               <input
                 type="number"
+                min={1}
+                max={50}
+                required
+                value={numberOfQuestions}
+                onChange={(e) => setNumberOfQuestions(Number(e.target.value))}
+                className="w-full px-3.5 py-2 bg-white border border-purple-300 rounded-xl font-black text-sm text-purple-950"
+              />
+              <p className="text-[10px] text-purple-700 mt-1">Exact question count AI will generate.</p>
+            </div>
+
+            <div className="p-4 bg-purple-50/60 rounded-xl border border-purple-200">
+              <label className="block font-bold uppercase text-purple-900 mb-1 flex items-center gap-1.5">
+                <Award className="w-4 h-4 text-purple-700" />
+                Total Marks
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                required
                 value={totalMarks}
                 onChange={(e) => setTotalMarks(Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-bold"
+                className="w-full px-3.5 py-2 bg-white border border-purple-300 rounded-xl font-black text-sm text-purple-950"
               />
+              <p className="text-[10px] text-purple-700 mt-1">Sum of marks will strictly equal this value.</p>
+            </div>
+
+            <div className="p-4 bg-purple-50/60 rounded-xl border border-purple-200">
+              <label className="block font-bold uppercase text-purple-900 mb-1 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-purple-700" />
+                Duration (Minutes)
+              </label>
+              <input
+                type="number"
+                min={5}
+                max={300}
+                required
+                value={duration}
+                onChange={(e) => setDuration(Number(e.target.value))}
+                className="w-full px-3.5 py-2 bg-white border border-purple-300 rounded-xl font-black text-sm text-purple-950"
+              />
+              <p className="text-[10px] text-purple-700 mt-1">Countdown exam timer for students.</p>
             </div>
           </div>
 
@@ -253,12 +297,12 @@ export default function AiQuickTestGeneratorPage() {
               {generating ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating 10-Mark Test with AI...
+                  Generating {numberOfQuestions} Questions ({totalMarks} Marks)...
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  Synthesize 10-Mark Test
+                  Generate {numberOfQuestions} Questions ({totalMarks} Marks)
                 </>
               )}
             </button>
@@ -271,10 +315,10 @@ export default function AiQuickTestGeneratorPage() {
         <div className="space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-purple-50/70 border border-purple-200 rounded-2xl">
             <div>
-              <span className="text-[10px] uppercase font-bold tracking-wider text-purple-700">Generated AI Quick Test</span>
+              <span className="text-[10px] uppercase font-bold tracking-wider text-purple-700">Generated Examination Paper</span>
               <h2 className="text-xl font-extrabold text-purple-950 mt-0.5">{generatedTest.title}</h2>
               <p className="text-xs text-purple-800">
-                Total Marks: {generatedTest.total_marks} &bull; Duration: {generatedTest.duration_minutes} Mins &bull; Instant Evaluation Mode
+                Total Marks: {generatedTest.total_marks} &bull; Questions: {generatedTest.questions.length} &bull; Duration: {generatedTest.duration_minutes} Mins
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -284,7 +328,7 @@ export default function AiQuickTestGeneratorPage() {
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xs font-bold text-slate-700"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                Regenerate
+                Change Criteria
               </button>
               <button
                 type="button"
@@ -293,7 +337,7 @@ export default function AiQuickTestGeneratorPage() {
                 className="inline-flex items-center gap-1.5 px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-md shadow-purple-600/20 cursor-pointer disabled:opacity-50"
               >
                 <Send className="w-4 h-4" />
-                {saving ? 'Publishing...' : 'Publish Test Immediately'}
+                {saving ? 'Publishing...' : 'Publish Test Now'}
               </button>
             </div>
           </div>

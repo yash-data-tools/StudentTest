@@ -356,8 +356,8 @@ export async function getDashboardMetrics() {
 
 export async function getAvailableTestsForStudent(studentId: string) {
   const db = readLocalDB();
-  // Return tests that are published or active
-  const tests = db.tests.filter(t => t.status === 'published' || t.status === 'active');
+  // Return tests that are published, active, or closed (so students can see status or past attempts)
+  const tests = db.tests.filter(t => t.status === 'published' || t.status === 'active' || t.status === 'closed');
 
   return tests.map(t => {
     const questions = db.questions.filter(q => q.test_id === t.id);
@@ -379,6 +379,9 @@ export async function getAvailableTestsForStudent(studentId: string) {
       question_count: questions.length,
       negative_marking_enabled: t.negative_marking_enabled,
       anti_cheat_settings: t.anti_cheat_settings,
+      status: t.status,
+      start_date: t.start_date || null,
+      end_date: t.end_date || null,
       student_attempt_status: latestAttempt ? latestAttempt.status : 'not_started',
       latest_attempt_id: latestAttempt ? latestAttempt.id : null,
       latest_score: latestAttempt && (latestAttempt.status === 'published' || latestAttempt.status === 'evaluated') ? latestAttempt.final_score : null,
@@ -437,6 +440,9 @@ export async function getExamQuestionsForStudent(testId: string) {
       exam_mode: test.exam_mode,
       negative_marking_enabled: test.negative_marking_enabled,
       anti_cheat_settings: test.anti_cheat_settings,
+      status: test.status,
+      start_date: test.start_date || null,
+      end_date: test.end_date || null,
     },
     questions: sanitizedQuestions,
   };

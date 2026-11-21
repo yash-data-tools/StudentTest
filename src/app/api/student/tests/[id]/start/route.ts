@@ -16,6 +16,34 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Test not found' }, { status: 404 });
     }
 
+    const now = Date.now();
+    const test = examData.test;
+
+    if (test.status === 'closed') {
+      return NextResponse.json(
+        { error: 'This exam has been stopped or closed by the tutor.' },
+        { status: 400 }
+      );
+    }
+
+    if (test.start_date && new Date(test.start_date).getTime() > now) {
+      return NextResponse.json(
+        {
+          error: `This exam is scheduled to start at ${new Date(
+            test.start_date
+          ).toLocaleString()}. You cannot start early.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (test.end_date && new Date(test.end_date).getTime() < now) {
+      return NextResponse.json(
+        { error: 'The deadline for taking this exam has passed.' },
+        { status: 400 }
+      );
+    }
+
     const attemptData = await startOrCreateExamAttempt(user.id, testId);
     if (!attemptData) {
       return NextResponse.json({ error: 'Failed to start examination attempt.' }, { status: 500 });

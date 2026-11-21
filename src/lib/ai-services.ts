@@ -5,6 +5,7 @@ export interface QuickTestParams {
   class_grade?: string;
   difficulty: 'easy' | 'medium' | 'hard' | 'mixed';
   total_marks?: number;
+  number_of_questions?: number;
   duration_minutes?: number;
   negative_marking?: boolean;
 }
@@ -31,7 +32,7 @@ export interface DescriptiveAiEvaluationResult {
 }
 
 /**
- * AI Service 1: Generate 10-Mark Quick Test
+ * AI Service 1: Generate Custom Marks & Question Count Test
  */
 export async function generateAiQuickTest(params: QuickTestParams): Promise<{
   title: string;
@@ -43,32 +44,36 @@ export async function generateAiQuickTest(params: QuickTestParams): Promise<{
   questions: GeneratedQuestion[];
 }> {
   const apiKey = process.env.GEMINI_API_KEY;
-  const targetMarks = params.total_marks || 10;
-  const duration = params.duration_minutes || 15;
+  const targetMarks = Number(params.total_marks) || 10;
+  const numQuestions = Number(params.number_of_questions) || Math.max(2, Math.round(targetMarks / 2.5));
+  const duration = Number(params.duration_minutes) || Math.max(10, numQuestions * 2.5);
   const negMarks = params.negative_marking ? 1 : 0;
 
   if (apiKey && apiKey.trim() !== '') {
     try {
       const prompt = `
 You are an expert school tutor and exam paper creator.
-Generate an original, high-quality, balanced ${targetMarks}-mark test for students.
+Generate an original, high-quality, balanced test for students with EXACTLY the specified number of questions and total marks.
+
 Subject: ${params.subject}
 Chapter: ${params.chapter}
 Topic: ${params.topic || 'Core Chapter Concepts'}
 Class/Grade: ${params.class_grade || 'Class 11/12 JEE Foundation'}
 Difficulty: ${params.difficulty}
 Target Total Marks: EXACTLY ${targetMarks} marks.
+Target Number of Questions: EXACTLY ${numQuestions} questions.
 
-Composition:
-- Generate 3 or 4 questions such that the sum of marks EXACTLY equals ${targetMarks}.
-- Mix of Single-Correct MCQ (options A, B, C, D with clear explanation) and 1 Numerical question with an integer or simple decimal target value.
-- Preserve proper equations, scientific formulas, and units.
-- Ensure only ONE option is correct for MCQs.
-- Negative marking: ${negMarks} for MCQs, 0 for numericals.
+CRITICAL RULES:
+1. You MUST generate EXACTLY ${numQuestions} questions in the "questions" array.
+2. The sum of the "marks" field across all ${numQuestions} questions MUST sum up to EXACTLY ${targetMarks} marks.
+3. Mix of Single-Correct MCQ (with options A, B, C, D) and Numerical questions (with target numerical answer).
+4. For MCQs, mark exactly ONE option as is_correct: true, and others as false.
+5. Negative marks: ${negMarks} for MCQs, 0 for numericals.
+6. Provide a clear step-by-step solution / explanation for every question.
 
-Return strictly valid JSON with no markdown formatting:
+Return strictly valid JSON with no markdown wrapping:
 {
-  "title": "${params.subject}: ${params.chapter} Quick Test",
+  "title": "${params.subject}: ${params.chapter} Test",
   "subject": "${params.subject}",
   "chapter": "${params.chapter}",
   "total_marks": ${targetMarks},
@@ -77,9 +82,9 @@ Return strictly valid JSON with no markdown formatting:
   "questions": [
     {
       "question_number": 1,
-      "question_text": "...",
+      "question_text": "Question statement...",
       "question_type": "mcq_single",
-      "marks": 3,
+      "marks": 2,
       "negative_marks": ${negMarks},
       "options": [
         { "option_letter": "A", "option_text": "...", "is_correct": false },
@@ -90,7 +95,7 @@ Return strictly valid JSON with no markdown formatting:
       "numerical_answer": null,
       "numerical_tolerance": 0,
       "numerical_tolerance_type": "exact",
-      "explanation": "Detailed step-by-step solution..."
+      "explanation": "..."
     }
   ]
 }
@@ -111,161 +116,144 @@ Return strictly valid JSON with no markdown formatting:
         const rawJson = result.candidates?.[0]?.content?.parts?.[0]?.text;
         if (rawJson) {
           const parsed = JSON.parse(rawJson);
-          return parsed;
+          if (parsed && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
+            // Guarantee total marks consistency
+            parsed.total_marks = targetMarks;
+            return parsed;
+          }
         }
       }
     } catch (err) {
-      console.warn('Gemini AI generation error, using curated template fallback:', err);
+      console.warn('Gemini AI generation error, using dynamic fallback:', err);
     }
   }
 
-  // Fallback Curated Question Generator (works 100% offline or when API key is missing)
-  return getCuratedQuickTest(params, targetMarks, duration, negMarks);
+  // Dynamic Rule-Based Fallback Generator
+  return getDynamicQuickTest(params, targetMarks, numQuestions, duration, negMarks);
 }
 
-function getCuratedQuickTest(
+function getDynamicQuickTest(
   params: QuickTestParams,
   targetMarks: number,
+  numQuestions: number,
   duration: number,
   negMarks: number
 ) {
-  const sub = params.subject.toLowerCase();
-  let questions: GeneratedQuestion[] = [];
+  const questions: GeneratedQuestion[] = [];
+  const baseMarksPerQ = Math.floor(targetMarks / numQuestions);
+  let remainderMarks = targetMarks - (baseMarksPerQ * numQuestions);
 
-  if (sub.includes('chem')) {
-    questions = [
-      {
-        question_number: 1,
-        question_text: `In atomic structure, what is the maximum number of electrons that can be accommodated in a principal energy level with quantum number n = 3?`,
-        question_type: 'mcq_single',
-        marks: 3,
-        negative_marks: negMarks,
-        options: [
-          { option_letter: 'A', option_text: '8 electrons', is_correct: false },
-          { option_letter: 'B', option_text: '18 electrons', is_correct: true },
-          { option_letter: 'C', option_text: '32 electrons', is_correct: false },
-          { option_letter: 'D', option_text: '2 electrons', is_correct: false },
-        ],
-        explanation: 'Maximum capacity of shell n is given by 2n² = 2*(3²) = 2*9 = 18 electrons.',
-      },
-      {
-        question_number: 2,
-        question_text: `Which of the following orbitals has a dumbbell shape?`,
-        question_type: 'mcq_single',
-        marks: 3,
-        negative_marks: negMarks,
-        options: [
-          { option_letter: 'A', option_text: 's-orbital', is_correct: false },
-          { option_letter: 'B', option_text: 'p-orbital', is_correct: true },
-          { option_letter: 'C', option_text: 'd-orbital', is_correct: false },
-          { option_letter: 'D', option_text: 'f-orbital', is_correct: false },
-        ],
-        explanation: 's-orbitals are spherical, p-orbitals are dumbbell-shaped, and d-orbitals are double dumbbell-shaped.',
-      },
-      {
-        question_number: 3,
-        question_text: `Calculate the total number of orbitals associated with the principal quantum number n = 2.`,
-        question_type: 'numerical',
-        marks: 4,
-        negative_marks: 0,
-        options: [],
-        numerical_answer: 4,
-        numerical_tolerance: 0.1,
-        numerical_tolerance_type: 'exact',
-        explanation: 'Total orbitals in shell n is n² = 2² = 4 (one 2s and three 2p orbitals).',
-      },
-    ];
-  } else if (sub.includes('math')) {
-    questions = [
-      {
-        question_number: 1,
-        question_text: `If the roots of the quadratic equation x² - 7x + k = 0 differ by 1, find the value of k.`,
-        question_type: 'numerical',
-        marks: 4,
-        negative_marks: 0,
-        options: [],
-        numerical_answer: 12,
-        numerical_tolerance: 0.1,
-        numerical_tolerance_type: 'exact',
-        explanation: 'Let roots be α and α+1. Sum = 2α + 1 = 7 => 2α = 6 => α = 3. Product k = α(α+1) = 3 * 4 = 12.',
-      },
-      {
-        question_number: 2,
-        question_text: `The value of log₂(64) is:`,
-        question_type: 'mcq_single',
-        marks: 3,
-        negative_marks: negMarks,
-        options: [
-          { option_letter: 'A', option_text: '4', is_correct: false },
-          { option_letter: 'B', option_text: '5', is_correct: false },
-          { option_letter: 'C', option_text: '6', is_correct: true },
-          { option_letter: 'D', option_text: '8', is_correct: false },
-        ],
-        explanation: 'Since 2^6 = 64, log₂(64) = 6.',
-      },
-      {
-        question_number: 3,
-        question_text: `The slope of the line perpendicular to the line 2x - 3y + 5 = 0 is:`,
-        question_type: 'mcq_single',
-        marks: 3,
-        negative_marks: negMarks,
-        options: [
-          { option_letter: 'A', option_text: '-3/2', is_correct: true },
-          { option_letter: 'B', option_text: '2/3', is_correct: false },
-          { option_letter: 'C', option_text: '3/2', is_correct: false },
-          { option_letter: 'D', option_text: '-2/3', is_correct: false },
-        ],
-        explanation: 'Slope of given line m₁ = 2/3. For perpendicular line m₂ = -1/m₁ = -3/2.',
-      },
-    ];
-  } else {
-    // Default: Physics
-    questions = [
-      {
-        question_number: 1,
-        question_text: `A vehicle accelerates uniformly from rest to 20 m/s in 4 seconds. Calculate the magnitude of its acceleration in m/s².`,
-        question_type: 'numerical',
-        marks: 4,
-        negative_marks: 0,
-        options: [],
-        numerical_answer: 5,
-        numerical_tolerance: 0.1,
-        numerical_tolerance_type: 'exact',
-        explanation: 'a = (v - u) / t = (20 - 0) / 4 = 5 m/s².',
-      },
-      {
-        question_number: 2,
-        question_text: `What is the dimensional formula for Work and Energy?`,
-        question_type: 'mcq_single',
-        marks: 3,
-        negative_marks: negMarks,
-        options: [
-          { option_letter: 'A', option_text: '[M L T⁻²]', is_correct: false },
-          { option_letter: 'B', option_text: '[M L² T⁻²]', is_correct: true },
-          { option_letter: 'C', option_text: '[M L² T⁻¹]', is_correct: false },
-          { option_letter: 'D', option_text: '[M L⁻¹ T⁻²]', is_correct: false },
-        ],
-        explanation: 'Work = Force × Displacement = [M L T⁻²] × [L] = [M L² T⁻²].',
-      },
-      {
-        question_number: 3,
-        question_text: `Which of the following is a scalar quantity?`,
-        question_type: 'mcq_single',
-        marks: 3,
-        negative_marks: negMarks,
-        options: [
-          { option_letter: 'A', option_text: 'Velocity', is_correct: false },
-          { option_letter: 'B', option_text: 'Acceleration', is_correct: false },
-          { option_letter: 'C', option_text: 'Electric Current', is_correct: true },
-          { option_letter: 'D', option_text: 'Displacement', is_correct: false },
-        ],
-        explanation: 'Electric current has magnitude and direction but follows scalar addition rules, hence it is a scalar quantity.',
-      },
-    ];
+  const bankTemplates = [
+    {
+      text: `Calculate the force acting on an object of mass 4 kg accelerating at 3 m/s².`,
+      type: 'numerical' as const,
+      numAns: 12,
+      explanation: `Newton's second law: F = m × a = 4 kg × 3 m/s² = 12 N.`,
+    },
+    {
+      text: `Which of the following is the SI unit of electric potential difference?`,
+      type: 'mcq_single' as const,
+      options: [
+        { option_letter: 'A', option_text: 'Ampere', is_correct: false },
+        { option_letter: 'B', option_text: 'Volt', is_correct: true },
+        { option_letter: 'C', option_text: 'Ohm', is_correct: false },
+        { option_letter: 'D', option_text: 'Joule', is_correct: false },
+      ],
+      explanation: `Electric potential difference is measured in Volts (V).`,
+    },
+    {
+      text: `An ideal gas undergoes isothermal expansion. Which parameter remains strictly constant?`,
+      type: 'mcq_single' as const,
+      options: [
+        { option_letter: 'A', option_text: 'Pressure', is_correct: false },
+        { option_letter: 'B', option_text: 'Volume', is_correct: false },
+        { option_letter: 'C', option_text: 'Temperature', is_correct: true },
+        { option_letter: 'D', option_text: 'Enthalpy change', is_correct: false },
+      ],
+      explanation: `Isothermal process is characterized by constant temperature (ΔT = 0).`,
+    },
+    {
+      text: `A train moves with uniform speed of 72 km/h. Convert this speed into m/s.`,
+      type: 'numerical' as const,
+      numAns: 20,
+      explanation: `72 km/h = 72 × (5/18) = 20 m/s.`,
+    },
+    {
+      text: `What is the maximum number of electrons that can occupy a d-subshell?`,
+      type: 'numerical' as const,
+      numAns: 10,
+      explanation: `A d-subshell has 5 orbitals, each holding up to 2 electrons, hence 5 × 2 = 10 electrons.`,
+    },
+    {
+      text: `Which fundamental principle states that no two electrons in an atom can have identical four quantum numbers?`,
+      type: 'mcq_single' as const,
+      options: [
+        { option_letter: 'A', option_text: 'Hund Rule of Maximum Multiplicity', is_correct: false },
+        { option_letter: 'B', option_text: 'Pauli Exclusion Principle', is_correct: true },
+        { option_letter: 'C', option_text: 'Aufbau Principle', is_correct: false },
+        { option_letter: 'D', option_text: 'Heisenberg Uncertainty Principle', is_correct: false },
+      ],
+      explanation: `Pauli Exclusion Principle forbids identical quantum states for electrons in an atom.`,
+    },
+    {
+      text: `If log₁₀(x) = 3, what is the value of x?`,
+      type: 'numerical' as const,
+      numAns: 1000,
+      explanation: `By definition of logarithm: x = 10³ = 1000.`,
+    },
+    {
+      text: `What is the chemical formula of limestone?`,
+      type: 'mcq_single' as const,
+      options: [
+        { option_letter: 'A', option_text: 'CaO', is_correct: false },
+        { option_letter: 'B', option_text: 'Ca(OH)₂', is_correct: false },
+        { option_letter: 'C', option_text: 'CaCO₃', is_correct: true },
+        { option_letter: 'D', option_text: 'CaSO₄', is_correct: false },
+      ],
+      explanation: `Limestone is calcium carbonate (CaCO₃).`,
+    },
+    {
+      text: `The rate of change of momentum of a body is directly proportional to:`,
+      type: 'mcq_single' as const,
+      options: [
+        { option_letter: 'A', option_text: 'Applied Force', is_correct: true },
+        { option_letter: 'B', option_text: 'Inertia', is_correct: false },
+        { option_letter: 'C', option_text: 'Velocity', is_correct: false },
+        { option_letter: 'D', option_text: 'Displacement', is_correct: false },
+      ],
+      explanation: `Newton's second law of motion states that force is rate of change of momentum.`,
+    },
+    {
+      text: `A resistor of 10 Ω carries a current of 2 A. Calculate the power dissipated in watts (W).`,
+      type: 'numerical' as const,
+      numAns: 40,
+      explanation: `P = I² × R = (2)² × 10 = 4 × 10 = 40 Watts.`,
+    },
+  ];
+
+  for (let i = 0; i < numQuestions; i++) {
+    const qMarks = baseMarksPerQ + (remainderMarks > 0 ? 1 : 0);
+    if (remainderMarks > 0) remainderMarks--;
+
+    const tmpl = bankTemplates[i % bankTemplates.length];
+    const isNum = tmpl.type === 'numerical';
+
+    questions.push({
+      question_number: i + 1,
+      question_text: `[${params.chapter}] ${tmpl.text}`,
+      question_type: tmpl.type,
+      marks: Math.max(1, qMarks),
+      negative_marks: isNum ? 0 : negMarks,
+      options: tmpl.options ? JSON.parse(JSON.stringify(tmpl.options)) : [],
+      numerical_answer: isNum ? tmpl.numAns : undefined,
+      numerical_tolerance: isNum ? 0.1 : undefined,
+      numerical_tolerance_type: 'exact',
+      explanation: tmpl.explanation,
+    });
   }
 
   return {
-    title: `${params.subject}: ${params.chapter} (AI Quick Test)`,
+    title: `${params.subject}: ${params.chapter} (${targetMarks} Marks - ${numQuestions} Questions)`,
     subject: params.subject,
     chapter: params.chapter,
     total_marks: targetMarks,
@@ -275,9 +263,6 @@ function getCuratedQuickTest(
   };
 }
 
-/**
- * AI Service 2: Descriptive / Short Answer Evaluation with Rubric & Reasoning
- */
 export async function evaluateDescriptiveAnswerWithAi(
   questionText: string,
   studentAnswer: string,
@@ -333,7 +318,6 @@ Return strictly valid JSON:
     }
   }
 
-  // Heuristic evaluation fallback
   const wordCount = studentAnswer.trim().split(/\s+/).length;
   const tentativeMarks = Math.min(maxMarks, Math.max(1, Math.round((wordCount / 20) * maxMarks)));
 
