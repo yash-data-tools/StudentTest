@@ -15,16 +15,25 @@ import {
   Settings,
   Shield,
   ChevronRight,
+  PlusCircle,
 } from 'lucide-react';
 import LogoutButton from './LogoutButton';
 
-const navItems = [
+interface NavItem {
+  name: string;
+  href: string;
+  icon: any;
+  badge?: string;
+}
+
+const navItems: NavItem[] = [
   { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
   { name: 'Students', href: '/admin/students', icon: Users },
-  { name: 'PDF to Test', href: '/admin/pdf-to-test', icon: FileUp, badge: 'Phase 3' },
-  { name: 'AI Quick Test', href: '/admin/ai-quick-test', icon: Sparkles, badge: 'Phase 7' },
+  { name: 'Create Test', href: '/admin/tests/create', icon: PlusCircle },
+  { name: 'PDF to Test', href: '/admin/pdf-to-test', icon: FileUp },
+  { name: 'AI Quick Test', href: '/admin/ai-quick-test', icon: Sparkles },
   { name: 'Test Management', href: '/admin/tests', icon: ClipboardList },
-  { name: 'Pending Reviews', href: '/admin/pending-reviews', icon: CheckCircle, badge: 'Phase 6' },
+  { name: 'Pending Reviews', href: '/admin/pending-reviews', icon: CheckCircle },
   { name: 'Results & Analytics', href: '/admin/results', icon: BarChart3 },
   { name: 'Question Bank', href: '/admin/question-bank', icon: BookOpen },
   { name: 'Student Activity', href: '/admin/activity', icon: Activity },

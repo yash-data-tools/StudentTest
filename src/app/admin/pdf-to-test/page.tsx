@@ -470,7 +470,12 @@ export default function PdfToTestPage() {
                           <option value="mcq_multiple">Multiple Correct MCQ</option>
                           <option value="numerical">Numerical Value</option>
                           <option value="true_false">True / False</option>
-                          <option value="short_answer">Short Answer / Descriptive</option>
+                          <option value="short_answer">Short Answer</option>
+                          <option value="long_answer">Long Answer (Handwritten Support)</option>
+                          <option value="derivation">Derivation / Proof (Handwritten Support)</option>
+                          <option value="diagram">Diagram-based Question</option>
+                          <option value="assertion_reason">Assertion-Reason</option>
+                          <option value="match_following">Match-the-Following</option>
                         </select>
                         {q.requires_verification && (
                           <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">

@@ -37,6 +37,7 @@ export interface LocalDB {
   question_options: any[];
   test_attempts: any[];
   student_responses: any[];
+  answer_attachments: any[];
   integrity_events: any[];
   activity_logs: any[];
   teacher_reviews: any[];
@@ -53,6 +54,7 @@ function getInitialDB(): LocalDB {
     question_options: [],
     test_attempts: [],
     student_responses: [],
+    answer_attachments: [],
     integrity_events: [],
     activity_logs: [],
     teacher_reviews: [],
@@ -72,7 +74,9 @@ export function readLocalDB(): LocalDB {
   }
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!parsed.answer_attachments) parsed.answer_attachments = [];
+    return parsed;
   } catch {
     const initial = getInitialDB();
     fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2), 'utf-8');
@@ -424,6 +428,13 @@ export async function getExamQuestionsForStudent(testId: string) {
       marks: q.marks,
       negative_marks: q.negative_marks,
       image_url: q.image_url,
+      numerical_unit: q.numerical_unit || null,
+      assertion_text: q.assertion_text || null,
+      reason_text: q.reason_text || null,
+      matching_pairs: q.matching_pairs || null,
+      rubric: q.rubric || null,
+      allow_handwritten: q.allow_handwritten !== false,
+      allow_typed: q.allow_typed !== false,
       options,
     };
   });
@@ -487,10 +498,14 @@ export async function startOrCreateExamAttempt(studentId: string, testId: string
 
   // Fetch any existing saved responses for this attempt
   const existingResponses = db.student_responses.filter(r => r.attempt_id === attempt.id);
+  const existingAttachments = (db.answer_attachments || [])
+    .filter(a => a.attempt_id === attempt.id)
+    .sort((a, b) => (a.page_order || 0) - (b.page_order || 0));
 
   return {
     attempt,
     responses: existingResponses,
+    attachments: existingAttachments,
   };
 }
 
@@ -561,4 +576,97 @@ export async function logIntegrityEvent(
   db.integrity_events.push(event);
   writeLocalDB(db);
   return event;
+}
+
+// ---------------------------------------------------------------------------
+// Answer Attachments & Handwritten Pages Storage Operations
+// ---------------------------------------------------------------------------
+
+export async function saveAnswerAttachment(data: {
+  attempt_id: string;
+  student_id: string;
+  test_id: string;
+  question_id: string;
+  file_url: string;
+  storage_path?: string;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
+  page_order?: number;
+}) {
+  const db = readLocalDB();
+  if (!db.answer_attachments) db.answer_attachments = [];
+
+  const existingPages = db.answer_attachments.filter(
+    (a) => a.attempt_id === data.attempt_id && a.question_id === data.question_id
+  );
+  const nextOrder = data.page_order || existingPages.length + 1;
+
+  const attachment = {
+    id: crypto.randomUUID(),
+    attempt_id: data.attempt_id,
+    student_id: data.student_id,
+    test_id: data.test_id,
+    question_id: data.question_id,
+    file_url: data.file_url,
+    storage_path: data.storage_path || '',
+    file_name: data.file_name,
+    file_size: data.file_size,
+    mime_type: data.mime_type,
+    page_order: nextOrder,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  db.answer_attachments.push(attachment);
+  writeLocalDB(db);
+  return attachment;
+}
+
+export async function getAnswerAttachments(attemptId: string, questionId?: string) {
+  const db = readLocalDB();
+  if (!db.answer_attachments) return [];
+  let list = db.answer_attachments.filter((a) => a.attempt_id === attemptId);
+  if (questionId) {
+    list = list.filter((a) => a.question_id === questionId);
+  }
+  return list.sort((a, b) => (a.page_order || 0) - (b.page_order || 0));
+}
+
+export async function deleteAnswerAttachment(attachmentId: string, studentId: string) {
+  const db = readLocalDB();
+  if (!db.answer_attachments) return false;
+  const idx = db.answer_attachments.findIndex((a) => a.id === attachmentId && a.student_id === studentId);
+  if (idx === -1) return false;
+
+  const [removed] = db.answer_attachments.splice(idx, 1);
+  // Re-sequence remaining pages for that question
+  const remaining = db.answer_attachments
+    .filter((a) => a.attempt_id === removed.attempt_id && a.question_id === removed.question_id)
+    .sort((a, b) => (a.page_order || 0) - (b.page_order || 0));
+
+  remaining.forEach((att, index) => {
+    att.page_order = index + 1;
+  });
+
+  writeLocalDB(db);
+  return true;
+}
+
+export async function reorderAnswerAttachments(attemptId: string, questionId: string, orderedIds: string[]) {
+  const db = readLocalDB();
+  if (!db.answer_attachments) return [];
+
+  orderedIds.forEach((id, index) => {
+    const att = db.answer_attachments.find(
+      (a) => a.id === id && a.attempt_id === attemptId && a.question_id === questionId
+    );
+    if (att) {
+      att.page_order = index + 1;
+      att.updated_at = new Date().toISOString();
+    }
+  });
+
+  writeLocalDB(db);
+  return getAnswerAttachments(attemptId, questionId);
 }

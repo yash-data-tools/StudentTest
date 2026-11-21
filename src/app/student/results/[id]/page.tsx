@@ -34,6 +34,7 @@ export default async function StudentResultScorecardPage({ params }: { params: P
     .sort((a, b) => a.order_index - b.order_index);
   const options = db.question_options.filter(o => questions.some(q => q.id === o.question_id));
   const responses = db.student_responses.filter(r => r.attempt_id === attempt.id);
+  const attachments = (db.answer_attachments || []).filter(a => a.attempt_id === attempt.id);
 
   // If teacher reviewed exam is not yet published by teacher, redirect to submitted notice
   if (test?.exam_mode === 'teacher_reviewed' && attempt.status !== 'published') {
@@ -211,6 +212,48 @@ export default async function StudentResultScorecardPage({ params }: { params: P
                     <div className="p-3 bg-slate-50 rounded-xl text-xs space-y-1">
                       <p className="text-slate-600">Your Answer: <span className="font-bold text-slate-900">{r?.numerical_response ?? 'None'}</span></p>
                       <p className="text-emerald-700 font-bold">Correct Target Answer: {q.numerical_answer} (Tolerance: ±{q.numerical_tolerance})</p>
+                    </div>
+                  )}
+
+                  {/* Written & Typed Answer Review */}
+                  {r?.text_response && (
+                    <div className="p-3 bg-slate-50 rounded-xl text-xs space-y-1">
+                      <p className="font-bold text-slate-700 text-[10px] uppercase">Your Typed Answer:</p>
+                      <p className="text-slate-900 whitespace-pre-wrap">{r.text_response}</p>
+                    </div>
+                  )}
+
+                  {/* Submitted Handwritten Pages Review */}
+                  {attachments.filter(a => a.question_id === q.id).length > 0 && (
+                    <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-200 text-xs space-y-2">
+                      <p className="font-bold text-indigo-950 text-[10px] uppercase">Your Submitted Handwritten Notebook Pages:</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {attachments
+                          .filter(a => a.question_id === q.id)
+                          .sort((a, b) => (a.page_order || 0) - (b.page_order || 0))
+                          .map((att, attIdx) => (
+                            <a
+                              key={att.id}
+                              href={att.file_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-lg overflow-hidden border border-indigo-200 bg-white p-1 block hover:border-indigo-500 transition-colors"
+                            >
+                              <span className="text-[10px] font-bold text-indigo-700 block mb-1">Page {att.page_order || attIdx + 1}</span>
+                              <div className="h-20 rounded overflow-hidden bg-slate-100 flex items-center justify-center">
+                                <img src={att.file_url} alt="Notebook Page" className="w-full h-full object-cover" />
+                              </div>
+                            </a>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Teacher Feedback */}
+                  {r?.teacher_feedback && (
+                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs">
+                      <p className="font-bold text-amber-900 text-[10px] uppercase">Teacher Feedback:</p>
+                      <p className="text-amber-950 mt-0.5">{r.teacher_feedback}</p>
                     </div>
                   )}
 

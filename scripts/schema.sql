@@ -76,7 +76,18 @@ CREATE TABLE IF NOT EXISTS questions (
     test_id UUID REFERENCES tests(id) ON DELETE CASCADE,
     question_number INT NOT NULL,
     question_text TEXT NOT NULL,
-    question_type VARCHAR(30) NOT NULL CHECK (question_type IN ('mcq_single', 'mcq_multiple', 'numerical', 'true_false', 'short_answer')),
+    question_type VARCHAR(30) NOT NULL CHECK (question_type IN (
+        'mcq_single', 
+        'mcq_multiple', 
+        'numerical', 
+        'true_false', 
+        'short_answer',
+        'long_answer',
+        'derivation',
+        'diagram',
+        'assertion_reason',
+        'match_following'
+    )),
     marks NUMERIC(5, 2) NOT NULL DEFAULT 1.0,
     negative_marks NUMERIC(5, 2) NOT NULL DEFAULT 0.0,
     explanation TEXT,
@@ -85,6 +96,13 @@ CREATE TABLE IF NOT EXISTS questions (
     numerical_tolerance_type VARCHAR(20) DEFAULT 'exact' CHECK (numerical_tolerance_type IN ('exact', 'absolute', 'range')),
     numerical_range_min NUMERIC(12, 4),
     numerical_range_max NUMERIC(12, 4),
+    numerical_unit VARCHAR(50),
+    assertion_text TEXT,
+    reason_text TEXT,
+    matching_pairs JSONB,
+    rubric JSONB,
+    allow_handwritten BOOLEAN DEFAULT TRUE,
+    allow_typed BOOLEAN DEFAULT TRUE,
     subject VARCHAR(100),
     chapter VARCHAR(150),
     topic VARCHAR(150),
@@ -160,6 +178,26 @@ CREATE TABLE IF NOT EXISTS student_responses (
 );
 
 CREATE INDEX IF NOT EXISTS idx_responses_attempt_id ON student_responses(attempt_id);
+
+-- 8b. ANSWER ATTACHMENTS TABLE (Handwritten Photos & Page Uploads)
+CREATE TABLE IF NOT EXISTS answer_attachments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    attempt_id UUID NOT NULL REFERENCES test_attempts(id) ON DELETE CASCADE,
+    student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    test_id UUID NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+    question_id UUID NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+    file_url TEXT NOT NULL,
+    storage_path TEXT,
+    file_name VARCHAR(255) NOT NULL,
+    file_size BIGINT NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    page_order INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_attempt ON answer_attachments(attempt_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_q ON answer_attachments(question_id);
 
 -- 9. INTEGRITY EVENTS TABLE (Exam Anti-Cheating Logs)
 CREATE TABLE IF NOT EXISTS integrity_events (

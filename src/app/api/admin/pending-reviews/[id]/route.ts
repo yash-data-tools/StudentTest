@@ -24,6 +24,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       .sort((a, b) => a.order_index - b.order_index);
     const options = db.question_options.filter(o => questions.some(q => q.id === o.question_id));
     const responses = db.student_responses.filter(r => r.attempt_id === attempt.id);
+    const attachments = (db.answer_attachments || []).filter(a => a.attempt_id === attempt.id);
     const integrityEvents = db.integrity_events
       .filter(e => e.attempt_id === attempt.id)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
@@ -33,6 +34,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const resp = responses.find(r => r.question_id === q.id);
       const qOptions = options.filter(o => o.question_id === q.id);
       const correctOpt = qOptions.find(o => o.is_correct);
+      const qAttachments = attachments
+        .filter(a => a.question_id === q.id)
+        .sort((a, b) => (a.page_order || 0) - (b.page_order || 0));
 
       return {
         question_id: q.id,
@@ -42,18 +46,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         max_marks: Number(q.marks) || 1,
         negative_marks: Number(q.negative_marks) || 0,
         options: qOptions,
+        image_url: q.image_url,
+        numerical_unit: q.numerical_unit,
+        rubric: q.rubric,
         correct_answer: correctOpt ? `${correctOpt.option_letter}. ${correctOpt.option_text}` : (q.numerical_answer !== null ? `Numerical Target: ${q.numerical_answer} (±${q.numerical_tolerance})` : 'Descriptive Rubric'),
         explanation: q.explanation,
         // Student response details
         student_response: {
-          is_answered: resp ? Boolean(resp.is_answered) : false,
+          is_answered: resp ? Boolean(resp.is_answered) : qAttachments.length > 0,
           is_visited: resp ? Boolean(resp.is_visited) : false,
           selected_options: resp?.selected_options,
           numerical_response: resp?.numerical_response,
           text_response: resp?.text_response,
+          attachments: qAttachments,
           is_correct: resp?.is_correct,
           ai_suggested_marks: resp?.marks_awarded ?? 0,
-          ai_reasoning: resp?.is_correct ? 'Automated exact match evaluation.' : 'Incorrect option selected or unattempted.',
+          ai_reasoning: resp?.is_correct ? 'Automated exact match evaluation.' : qAttachments.length > 0 ? 'Handwritten solution attached for teacher review.' : (resp?.text_response ? 'Typed answer submitted for teacher review.' : 'Unattempted.'),
           teacher_override_marks: resp?.teacher_override_marks !== undefined ? resp.teacher_override_marks : resp?.marks_awarded ?? 0,
           teacher_feedback: resp?.teacher_feedback || '',
         },

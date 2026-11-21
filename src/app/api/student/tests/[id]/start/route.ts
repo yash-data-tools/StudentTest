@@ -61,6 +61,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       questions: examData.questions,
       attempt: attemptData.attempt,
       savedResponses: attemptData.responses,
+      savedAttachments: attemptData.attachments || [],
     });
   } catch (error: any) {
     console.error('Start exam error:', error);

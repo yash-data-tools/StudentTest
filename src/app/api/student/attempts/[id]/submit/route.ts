@@ -61,8 +61,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         continue;
       }
 
-      // 1. Single Correct MCQ & True/False
-      if (q.question_type === 'mcq_single' || q.question_type === 'true_false') {
+      // 1. Single Correct MCQ, True/False & Assertion-Reason
+      if (
+        q.question_type === 'mcq_single' ||
+        q.question_type === 'true_false' ||
+        q.question_type === 'assertion_reason'
+      ) {
         const correctOpt = options.find(o => o.question_id === q.id && o.is_correct);
         const studentSelected = resp.selected_options; // e.g. "A" or ["A"]
         const selectedLetter = Array.isArray(studentSelected) ? studentSelected[0] : studentSelected;
@@ -132,8 +136,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           wrongCount++;
         }
       }
-      // 4. Short Answer (Teacher Reviewed / AI Evaluated)
-      else if (q.question_type === 'short_answer') {
+      // 4. Descriptive / Handwritten Answers (Held for Teacher Review)
+      else if (
+        q.question_type === 'short_answer' ||
+        q.question_type === 'long_answer' ||
+        q.question_type === 'derivation' ||
+        q.question_type === 'diagram' ||
+        q.question_type === 'match_following'
+      ) {
         // Will be evaluated in teacher review mode
         resp.is_correct = null;
         resp.marks_awarded = 0;

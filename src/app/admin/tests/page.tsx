@@ -135,15 +135,22 @@ export default function TestManagementPage() {
         </div>
         <div className="flex items-center gap-2">
           <Link
-            href="/admin/pdf-to-test"
+            href="/admin/tests/create"
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Create Test
+          </Link>
+          <Link
+            href="/admin/pdf-to-test"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold shadow-sm transition-colors"
           >
             <FileUp className="w-4 h-4" />
             PDF to Test
           </Link>
           <Link
             href="/admin/ai-quick-test"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-sm transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold shadow-sm transition-colors"
           >
             <Sparkles className="w-4 h-4" />
             AI Quick Test

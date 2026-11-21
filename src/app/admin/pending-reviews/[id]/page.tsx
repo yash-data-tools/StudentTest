@@ -20,6 +20,13 @@ import {
   Check,
   X,
   Eye,
+  Camera,
+  ZoomIn,
+  ZoomOut,
+  RotateCw,
+  Download,
+  Maximize2,
+  FileText,
 } from 'lucide-react';
 
 export default function TeacherReviewPaperPage({ params }: { params: Promise<{ id: string }> }) {
@@ -37,6 +44,11 @@ export default function TeacherReviewPaperPage({ params }: { params: Promise<{ i
   const [integrityReason, setIntegrityReason] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // High-Resolution Image Viewer Modal State
+  const [activeImageModal, setActiveImageModal] = useState<{ url: string; title: string; pageNumber: number } | null>(null);
+  const [imageZoom, setImageZoom] = useState(1);
+  const [imageRotation, setImageRotation] = useState(0);
 
   useEffect(() => {
     async function loadReview() {
@@ -299,22 +311,59 @@ export default function TeacherReviewPaperPage({ params }: { params: Promise<{ i
                 </div>
               </div>
 
+              {/* Quick Marks Helper Pills */}
+              <div className="flex items-center justify-end gap-1.5 pt-1">
+                <span className="text-[10px] font-bold text-slate-400">Quick Score:</span>
+                <button
+                  type="button"
+                  onClick={() => handleMarkChange(q.question_id, q.max_marks, q.max_marks)}
+                  className="px-2 py-0.5 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-bold cursor-pointer transition-colors"
+                >
+                  Full ({q.max_marks}M)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMarkChange(q.question_id, q.max_marks / 2, q.max_marks)}
+                  className="px-2 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-bold cursor-pointer transition-colors"
+                >
+                  Half ({q.max_marks / 2}M)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMarkChange(q.question_id, 0, q.max_marks)}
+                  className="px-2 py-0.5 rounded bg-rose-100 hover:bg-rose-200 text-rose-800 text-[10px] font-bold cursor-pointer transition-colors"
+                >
+                  Zero (0M)
+                </button>
+              </div>
+
               {/* Question Statement */}
               <p className="text-xs sm:text-sm font-semibold text-slate-900 leading-relaxed">
                 {q.question_text}
               </p>
 
+              {/* Question Image if present */}
+              {q.image_url && (
+                <div className="max-w-md rounded-xl overflow-hidden border border-slate-200 bg-slate-50 p-2">
+                  <img src={q.image_url} alt="Question Diagram" className="w-full object-contain max-h-48" />
+                </div>
+              )}
+
               {/* Student Actual Answer vs Correct Answer */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Student Answer</span>
-                  <p className="font-bold text-slate-800">
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
+                    Student Typed / Selected Response
+                  </span>
+                  <p className="font-bold text-slate-800 whitespace-pre-wrap">
                     {resp.selected_options
                       ? `Option ${resp.selected_options}`
                       : resp.numerical_response !== null && resp.numerical_response !== undefined
                       ? `Value: ${resp.numerical_response}`
                       : resp.text_response
                       ? resp.text_response
+                      : resp.attachments?.length > 0
+                      ? 'Handwritten solution attached below'
                       : 'Unattempted'}
                   </p>
                 </div>
@@ -324,6 +373,65 @@ export default function TeacherReviewPaperPage({ params }: { params: Promise<{ i
                   <p className="font-bold text-emerald-950">{q.correct_answer}</p>
                 </div>
               </div>
+
+              {/* Handwritten Pages Inspection Section (Phase 10 Critical) */}
+              {resp.attachments && resp.attachments.length > 0 && (
+                <div className="p-4 bg-indigo-50/60 rounded-xl border-2 border-indigo-200 space-y-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-extrabold text-indigo-950 flex items-center gap-1.5">
+                      <Camera className="w-4 h-4 text-indigo-600" />
+                      Student Handwritten Solution ({resp.attachments.length} Pages):
+                    </span>
+                    <span className="text-[11px] text-indigo-700 font-semibold">Click thumbnail to inspect full resolution</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {resp.attachments.map((att: any, attIdx: number) => (
+                      <div
+                        key={att.id || attIdx}
+                        onClick={() => {
+                          setActiveImageModal({
+                            url: att.file_url,
+                            title: `Q${q.question_number} - Page ${att.page_order || attIdx + 1}`,
+                            pageNumber: att.page_order || attIdx + 1,
+                          });
+                          setImageZoom(1);
+                          setImageRotation(0);
+                        }}
+                        className="bg-white rounded-xl border-2 border-indigo-200 hover:border-indigo-500 p-2 cursor-pointer transition-all shadow-sm group"
+                      >
+                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 mb-1.5">
+                          <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-black">
+                            Page {att.page_order || attIdx + 1}
+                          </span>
+                          <span className="text-indigo-600 flex items-center gap-0.5 group-hover:underline">
+                            <Eye className="w-3 h-3" /> Inspect
+                          </span>
+                        </div>
+                        <div className="h-28 rounded-lg overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center">
+                          <img
+                            src={att.file_url}
+                            alt={`Q${q.question_number} Page ${att.page_order}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Rubric Criteria if provided */}
+              {q.rubric && q.rubric.length > 0 && (
+                <div className="p-3 bg-purple-50/50 rounded-xl border border-purple-200 text-xs">
+                  <span className="font-bold text-purple-900 block mb-1">Expected Marking Rubric / Key Steps:</span>
+                  <ul className="list-disc list-inside space-y-0.5 text-purple-950 font-medium">
+                    {q.rubric.map((item: string, rIdx: number) => (
+                      <li key={rIdx}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* AI Explanation & Feedback */}
               <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 flex items-start gap-2 text-xs text-slate-600">
@@ -381,6 +489,75 @@ export default function TeacherReviewPaperPage({ params }: { params: Promise<{ i
           </div>
         )}
       </div>
+
+      {/* 4. HIGH-RESOLUTION HANDWRITTEN IMAGE INSPECTION MODAL */}
+      {activeImageModal && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4">
+          <div className="w-full max-w-5xl flex items-center justify-between text-white pb-3 border-b border-white/10">
+            <div className="flex items-center gap-2">
+              <Camera className="w-5 h-5 text-indigo-400" />
+              <span className="font-extrabold text-sm">{activeImageModal.title}</span>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <button
+                onClick={() => setImageZoom((z) => Math.min(3, z + 0.25))}
+                className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-white font-bold flex items-center gap-1 transition-colors"
+                title="Zoom In"
+              >
+                <ZoomIn className="w-4 h-4" />
+                Zoom In
+              </button>
+              <button
+                onClick={() => setImageZoom((z) => Math.max(0.5, z - 0.25))}
+                className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-white font-bold flex items-center gap-1 transition-colors"
+                title="Zoom Out"
+              >
+                <ZoomOut className="w-4 h-4" />
+                Zoom Out
+              </button>
+              <button
+                onClick={() => setImageRotation((r) => (r + 90) % 360)}
+                className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-white font-bold flex items-center gap-1 transition-colors"
+                title="Rotate 90deg"
+              >
+                <RotateCw className="w-4 h-4" />
+                Rotate
+              </button>
+              <a
+                href={activeImageModal.url}
+                target="_blank"
+                rel="noreferrer"
+                download
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-white font-bold flex items-center gap-1 transition-colors"
+                title="Open Original"
+              >
+                <Download className="w-4 h-4" />
+                Download
+              </a>
+              <button
+                onClick={() => setActiveImageModal(null)}
+                className="p-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-white font-bold transition-colors ml-2"
+                title="Close Viewer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-auto max-h-[82vh] w-full flex items-center justify-center p-4">
+            <img
+              src={activeImageModal.url}
+              alt={activeImageModal.title}
+              style={{
+                transform: `scale(${imageZoom}) rotate(${imageRotation}deg)`,
+                transition: 'transform 0.15s ease',
+              }}
+              className="max-h-full max-w-full object-contain rounded-xl shadow-2xl"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

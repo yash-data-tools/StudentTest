@@ -1,17 +1,37 @@
+export type QuestionType =
+  | 'mcq_single'
+  | 'mcq_multiple'
+  | 'numerical'
+  | 'true_false'
+  | 'short_answer'
+  | 'long_answer'
+  | 'derivation'
+  | 'diagram'
+  | 'assertion_reason'
+  | 'match_following';
+
 export interface ExtractedQuestion {
   id?: string;
   question_number: number;
   question_text: string;
-  question_type: 'mcq_single' | 'mcq_multiple' | 'numerical' | 'true_false' | 'short_answer';
+  question_type: QuestionType;
   marks: number;
   negative_marks: number;
   options: { option_letter: string; option_text: string; is_correct: boolean }[];
   numerical_answer?: number;
   numerical_tolerance?: number;
   numerical_tolerance_type?: 'exact' | 'absolute' | 'range';
+  numerical_unit?: string;
+  assertion_text?: string;
+  reason_text?: string;
+  matching_pairs?: { left: string; right: string }[];
   explanation?: string;
+  rubric?: string[];
+  allow_handwritten?: boolean;
+  allow_typed?: boolean;
   ai_confidence: number;
   requires_verification: boolean;
+  source_page?: number;
 }
 
 export interface ParsedExamData {
@@ -25,6 +45,7 @@ export interface ParsedExamData {
   raw_text: string;
   is_scanned: boolean;
   extraction_method: 'local_ai' | 'gemini_multimodal' | 'heuristic_fallback';
+  warning?: string;
 }
 
 /**
@@ -59,7 +80,8 @@ export async function extractTextFromPdf(buffer: Buffer): Promise<{ text: string
 }
 
 /**
- * Step 2: Full Extraction & Parsing Workflow
+ * Step 2: Full Extraction & Parsing Workflow (STRICT SOURCE MODE)
+ * Never hallucinates or invents fake questions.
  */
 export async function parsePdfToExam(buffer: Buffer, originalFilename: string): Promise<ParsedExamData> {
   const { text: extractedText, isScanned } = await extractTextFromPdf(buffer);
@@ -77,12 +99,12 @@ export async function parsePdfToExam(buffer: Buffer, originalFilename: string): 
     }
   }
 
-  // Fallback: Resilient Rule-Based Parser (zero cost, works offline)
+  // Fallback: Deterministic Rule-Based Parser (zero cost, strictly from actual text)
   return parseWithHeuristics(extractedText, originalFilename, isScanned);
 }
 
 /**
- * AI Parser using Google Gemini
+ * AI Parser using Google Gemini (STRICT SOURCE ACCURACY)
  */
 async function parseWithGemini(
   pdfBuffer: Buffer,
@@ -93,16 +115,29 @@ async function parseWithGemini(
 ): Promise<ParsedExamData> {
   const prompt = `
 You are an expert academic examination parser. Convert this question paper into structured interactive test data.
-Rules:
-1. Detect each question carefully, preserving mathematical notation, chemical formulas, fractions, and superscripts/subscripts.
-2. Supported question types: 'mcq_single', 'mcq_multiple', 'numerical', 'true_false', 'short_answer'.
-3. For MCQs, extract all options with letters ('A', 'B', 'C', 'D'). Mark 'is_correct' if an answer key or solution is available; otherwise leave false and set requires_verification: true.
-4. For numerical questions, detect target numerical answer and set question_type to 'numerical'.
-5. Default marks: 1.0 (or whatever is marked in the paper). Default negative marks: 0 or as indicated.
-6. Return strictly valid JSON with no markdown wrapping or extra comments:
+
+CRITICAL RULES (STRICT SOURCE FIDELITY - NO HALLUCINATIONS):
+1. Extract ONLY questions that are genuinely present in the document.
+2. ABSOLUTELY NEVER hallucinate, invent, replace, or fabricate questions. If a question is unreadable, do not make one up.
+3. If the paper has 5 questions, extract 5. If only 3 are readable, extract 3. If none are readable, return an empty array [].
+4. Supported question types:
+   - 'mcq_single': Single correct multiple-choice
+   - 'mcq_multiple': Multiple correct choices
+   - 'numerical': Numerical answers with tolerance and units
+   - 'true_false': True / False
+   - 'short_answer': Conceptual short questions (1-3 marks)
+   - 'long_answer': Detailed descriptive questions (5-10 marks)
+   - 'derivation': Mathematical, physics, or scientific derivations / proofs
+   - 'diagram': Diagram drawing or interpretation questions
+   - 'assertion_reason': Assertion and Reason statement questions
+   - 'match_following': Match items in Column A with Column B
+5. For subjective questions ('short_answer', 'long_answer', 'derivation', 'diagram'), set allow_handwritten: true and options: []. Do NOT force them into MCQs!
+6. For numerical questions, identify numerical answer and units (e.g. "m/s", "Joules", "kg").
+7. Preserve equations, math symbols, superscripts, subscripts, chemical formulas, and original marks.
+8. Return strictly valid JSON with no markdown formatting:
 {
-  "title": "Exam Title derived from paper",
-  "subject": "Physics/Chemistry/Math/Biology/General",
+  "title": "Title of paper",
+  "subject": "Physics/Chemistry/Mathematics/Biology/General",
   "chapter": "Chapter name or General",
   "total_marks": 50,
   "duration_minutes": 60,
@@ -112,20 +147,24 @@ Rules:
       "question_number": 1,
       "question_text": "Full question statement",
       "question_type": "mcq_single",
-      "marks": 4,
-      "negative_marks": 1,
+      "marks": 1,
+      "negative_marks": 0.25,
       "options": [
         { "option_letter": "A", "option_text": "...", "is_correct": true },
-        { "option_letter": "B", "option_text": "...", "is_correct": false },
-        { "option_letter": "C", "option_text": "...", "is_correct": false },
-        { "option_letter": "D", "option_text": "...", "is_correct": false }
+        { "option_letter": "B", "option_text": "...", "is_correct": false }
       ],
       "numerical_answer": null,
       "numerical_tolerance": 0.01,
-      "numerical_tolerance_type": "exact",
+      "numerical_unit": null,
+      "assertion_text": null,
+      "reason_text": null,
+      "matching_pairs": null,
       "explanation": "...",
+      "rubric": ["Step 1", "Step 2"],
+      "allow_handwritten": true,
       "ai_confidence": 0.95,
-      "requires_verification": false
+      "requires_verification": false,
+      "source_page": 1
     }
   ]
 }
@@ -163,7 +202,7 @@ Rules:
       contents,
       generationConfig: {
         responseMimeType: 'application/json',
-        temperature: 0.1,
+        temperature: 0.0,
       },
     }),
   });
@@ -173,17 +212,41 @@ Rules:
   }
 
   const result = await response.json();
-  const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-  const parsed = JSON.parse(rawText);
+  const rawJson = result.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+  const parsed = JSON.parse(rawJson);
+
+  const cleanQuestions = (parsed.questions || []).map((q: any, idx: number) => ({
+    question_number: q.question_number || idx + 1,
+    question_text: q.question_text || '',
+    question_type: q.question_type || 'short_answer',
+    marks: Number(q.marks) || 1,
+    negative_marks: Number(q.negative_marks) || 0,
+    options: Array.isArray(q.options) ? q.options : [],
+    numerical_answer: q.numerical_answer !== undefined ? q.numerical_answer : null,
+    numerical_tolerance: q.numerical_tolerance ?? 0.01,
+    numerical_unit: q.numerical_unit || null,
+    assertion_text: q.assertion_text || null,
+    reason_text: q.reason_text || null,
+    matching_pairs: q.matching_pairs || null,
+    explanation: q.explanation || '',
+    rubric: Array.isArray(q.rubric) ? q.rubric : [],
+    allow_handwritten: q.allow_handwritten !== false,
+    allow_typed: q.allow_typed !== false,
+    ai_confidence: q.ai_confidence || 0.9,
+    requires_verification: Boolean(q.requires_verification),
+    source_page: q.source_page || 1,
+  }));
+
+  const calculatedTotal = cleanQuestions.reduce((sum: number, q: any) => sum + q.marks, 0);
 
   return {
     title: parsed.title || filename.replace(/\.[^/.]+$/, ''),
     subject: parsed.subject || 'General Science',
-    chapter: parsed.chapter || 'Comprehensive Assessment',
-    total_marks: parsed.total_marks || parsed.questions?.reduce((acc: number, q: any) => acc + (q.marks || 1), 0) || 10,
+    chapter: parsed.chapter || 'Extracted Assessment',
+    total_marks: parsed.total_marks || calculatedTotal || 50,
     duration_minutes: parsed.duration_minutes || 60,
     exam_mode: parsed.exam_mode || 'teacher_reviewed',
-    questions: parsed.questions || [],
+    questions: cleanQuestions,
     raw_text: extractedText,
     is_scanned: isScanned,
     extraction_method: 'gemini_multimodal',
@@ -191,13 +254,16 @@ Rules:
 }
 
 /**
- * Deterministic Heuristic Regex Parser (Resilient zero-cost fallback)
+ * Deterministic Heuristic Regex Parser (Strictly source-bound; zero hallucination)
  */
 function parseWithHeuristics(rawText: string, filename: string, isScanned: boolean): ParsedExamData {
   const cleanTitle = filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
   const questions: ExtractedQuestion[] = [];
 
-  const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
 
   let currentQ: Partial<ExtractedQuestion> | null = null;
   let qNum = 1;
@@ -205,29 +271,37 @@ function parseWithHeuristics(rawText: string, filename: string, isScanned: boole
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    const qMatch = line.match(/^(?:Q(?:uestion|\.)?\s*(\d+)[:.]?|(\d+)[.)])\s*(.*)/i);
+    // Detect question boundaries: e.g. "Q1.", "1.", "Question 1:", "Q.1", "(1)"
+    const qMatch = line.match(/^(?:Q(?:uestion|\.)?\s*(\d+)[:.]?|(\d+)[.)]|\((\d+)\))\s*(.*)/i);
     if (qMatch) {
       if (currentQ && currentQ.question_text) {
-        finalizeQuestion(currentQ as ExtractedQuestion, questions);
+        finalizeHeuristicQuestion(currentQ as ExtractedQuestion, questions);
       }
 
-      const num = parseInt(qMatch[1] || qMatch[2] || String(qNum), 10);
-      const text = qMatch[3] || '';
+      const num = parseInt(qMatch[1] || qMatch[2] || qMatch[3] || String(qNum), 10);
+      const text = qMatch[4] || '';
+
+      // Detect question marks if specified at line end: e.g. "[5 Marks]" or "(3M)" or "[3]"
+      const marksMatch = text.match(/\[(\d+)\s*(?:marks?|m)?\]|\((\d+)\s*(?:marks?|m)\)/i);
+      const detectedMarks = marksMatch ? parseInt(marksMatch[1] || marksMatch[2], 10) : 1;
 
       currentQ = {
         question_number: num,
         question_text: text,
-        question_type: 'mcq_single',
-        marks: 4,
-        negative_marks: 1,
+        question_type: determineTypeFromText(text),
+        marks: detectedMarks,
+        negative_marks: 0,
         options: [],
-        ai_confidence: 0.85,
+        ai_confidence: 0.8,
         requires_verification: true,
+        allow_handwritten: true,
+        allow_typed: true,
       };
       qNum++;
       continue;
     }
 
+    // Detect option lines: e.g. "(A) option text" or "A. option text" or "a) option text"
     const optMatch = line.match(/^(?:\(?([A-Da-d])\)[.:]?|([A-Da-d])[.)])\s*(.*)/);
     if (optMatch && currentQ) {
       const letter = (optMatch[1] || optMatch[2]).toUpperCase();
@@ -236,14 +310,18 @@ function parseWithHeuristics(rawText: string, filename: string, isScanned: boole
       currentQ.options.push({
         option_letter: letter,
         option_text: optText,
-        is_correct: currentQ.options.length === 0,
+        is_correct: currentQ.options.length === 0, // provisional
       });
+      // If options are found, set type to MCQ
+      currentQ.question_type = 'mcq_single';
       continue;
     }
 
     if (currentQ) {
       if (!currentQ.options || currentQ.options.length === 0) {
-        currentQ.question_text += ' ' + line;
+        currentQ.question_text = (currentQ.question_text || '') + ' ' + line;
+        // Re-evaluate type as more text is added
+        currentQ.question_type = determineTypeFromText(currentQ.question_text || '');
       } else {
         const lastOpt = currentQ.options[currentQ.options.length - 1];
         lastOpt.option_text += ' ' + line;
@@ -252,71 +330,80 @@ function parseWithHeuristics(rawText: string, filename: string, isScanned: boole
   }
 
   if (currentQ && currentQ.question_text) {
-    finalizeQuestion(currentQ as ExtractedQuestion, questions);
+    finalizeHeuristicQuestion(currentQ as ExtractedQuestion, questions);
   }
 
-  if (questions.length === 0) {
-    questions.push(
-      {
-        question_number: 1,
-        question_text: lines.slice(0, 3).join(' ') || 'What is the SI unit of electric current?',
-        question_type: 'mcq_single',
-        marks: 4,
-        negative_marks: 1,
-        options: [
-          { option_letter: 'A', option_text: 'Ampere', is_correct: true },
-          { option_letter: 'B', option_text: 'Volt', is_correct: false },
-          { option_letter: 'C', option_text: 'Ohm', is_correct: false },
-          { option_letter: 'D', option_text: 'Watt', is_correct: false },
-        ],
-        explanation: 'The SI unit of electric current is Ampere (A).',
-        ai_confidence: 0.9,
-        requires_verification: false,
-      },
-      {
-        question_number: 2,
-        question_text: 'A particle moves along a straight line with constant acceleration 2 m/s^2 from rest. Find displacement after 5 seconds.',
-        question_type: 'numerical',
-        marks: 4,
-        negative_marks: 0,
-        options: [],
-        numerical_answer: 25,
-        numerical_tolerance: 0.1,
-        numerical_tolerance_type: 'exact',
-        explanation: 'Using s = ut + 0.5*a*t^2 = 0 + 0.5 * 2 * (5^2) = 25 meters.',
-        ai_confidence: 0.95,
-        requires_verification: false,
-      }
-    );
-  }
+  // STRICT SOURCE POLICY:
+  // If 0 questions could be extracted, DO NOT INVENT QUESTIONS!
+  // Return empty questions array with an informative warning so admin knows.
+  const warning =
+    questions.length === 0
+      ? 'No readable questions were detected in the source text. You can add questions manually or review the PDF scan quality.'
+      : undefined;
 
   const totalMarks = questions.reduce((sum, q) => sum + q.marks, 0);
 
   return {
-    title: cleanTitle || 'Extracted Examination Paper',
-    subject: 'Physics & Chemistry',
-    chapter: 'Extracted Syllabus',
-    total_marks: totalMarks || 50,
-    duration_minutes: 60,
+    title: cleanTitle || 'Extracted Question Paper',
+    subject: 'General Science',
+    chapter: 'Question Paper',
+    total_marks: totalMarks > 0 ? totalMarks : 10,
+    duration_minutes: Math.max(15, questions.length * 4),
     exam_mode: 'teacher_reviewed',
     questions,
     raw_text: rawText,
     is_scanned: isScanned,
     extraction_method: 'heuristic_fallback',
+    warning,
   };
 }
 
-function finalizeQuestion(q: ExtractedQuestion, list: ExtractedQuestion[]) {
-  if (q.options && q.options.length > 0) {
-    q.question_type = 'mcq_single';
-  } else {
-    if (/find|calculate|determine|value of|magnitude/i.test(q.question_text)) {
-      q.question_type = 'numerical';
-      q.numerical_answer = 0;
-      q.numerical_tolerance = 0.05;
-    } else {
-      q.question_type = 'short_answer';
+function determineTypeFromText(text: string): QuestionType {
+  const lower = text.toLowerCase();
+  if (lower.startsWith('derive') || lower.includes('derivation') || lower.includes('prove that') || lower.includes('show that')) {
+    return 'derivation';
+  }
+  if (lower.startsWith('draw') || lower.includes('labeled diagram') || lower.includes('diagram showing')) {
+    return 'diagram';
+  }
+  if (lower.includes('assertion') && lower.includes('reason')) {
+    return 'assertion_reason';
+  }
+  if (lower.includes('match the following') || lower.includes('column a') || lower.includes('column i')) {
+    return 'match_following';
+  }
+  if (lower.includes('calculate') || lower.includes('find the value') || lower.includes('determine the magnitude')) {
+    return 'numerical';
+  }
+  if (lower.includes('explain in detail') || lower.includes('describe the working') || lower.includes('discuss')) {
+    return 'long_answer';
+  }
+  if (lower.includes('define') || lower.includes('state the') || lower.includes('what is') || lower.includes('short note')) {
+    return 'short_answer';
+  }
+  return 'short_answer';
+}
+
+function finalizeHeuristicQuestion(q: ExtractedQuestion, list: ExtractedQuestion[]) {
+  // Clean question text and extract any embedded marks like "(5 marks)"
+  const marksMatch = q.question_text.match(/\[(\d+)\s*(?:marks?|m)?\]|\((\d+)\s*(?:marks?|m)\)/i);
+  if (marksMatch) {
+    q.marks = parseInt(marksMatch[1] || marksMatch[2], 10);
+    q.question_text = q.question_text.replace(marksMatch[0], '').trim();
+  }
+
+  // Adjust default marks based on question type if not explicitly stated
+  if (q.marks === 1) {
+    if (q.question_type === 'derivation' || q.question_type === 'long_answer') {
+      q.marks = 5;
+    } else if (q.question_type === 'diagram') {
+      q.marks = 4;
+    } else if (q.question_type === 'numerical') {
+      q.marks = 3;
+    } else if (q.question_type === 'short_answer') {
+      q.marks = 2;
     }
   }
+
   list.push(q);
 }
