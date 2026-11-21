@@ -124,6 +124,135 @@ export function writeLocalDB(data: LocalDB): void {
   }
 }
 
+let schemaMigrationAttempted = false;
+
+/**
+ * Idempotently verifies and aligns PostgreSQL relation "questions" schema and constraints:
+ * - Ensures questions_question_type_check allows all 10 canonical question types
+ * - Ensures all Phase 2 columns (numerical_unit, assertion_text, etc.) exist
+ */
+export async function ensureQuestionsSchemaConstraints(): Promise<void> {
+  if (schemaMigrationAttempted) return;
+  const p = getPgPool();
+  if (!p || !hasPostgres) return;
+
+  try {
+    const migrationSql = `
+      DO $$
+      BEGIN
+        -- 1. Ensure questions_question_type_check includes all 10 canonical question types
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint 
+          WHERE conname = 'questions_question_type_check'
+        ) THEN
+          ALTER TABLE questions DROP CONSTRAINT questions_question_type_check;
+        END IF;
+
+        ALTER TABLE questions ADD CONSTRAINT questions_question_type_check 
+          CHECK (question_type IN (
+            'mcq_single', 
+            'mcq_multiple', 
+            'numerical', 
+            'true_false', 
+            'short_answer', 
+            'long_answer', 
+            'derivation', 
+            'diagram', 
+            'assertion_reason', 
+            'match_following'
+          ));
+
+        -- 2. Ensure Phase 2 columns exist if missing
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'questions' AND column_name = 'numerical_unit') THEN
+          ALTER TABLE questions ADD COLUMN numerical_unit VARCHAR(50);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'questions' AND column_name = 'assertion_text') THEN
+          ALTER TABLE questions ADD COLUMN assertion_text TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'questions' AND column_name = 'reason_text') THEN
+          ALTER TABLE questions ADD COLUMN reason_text TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'questions' AND column_name = 'matching_pairs') THEN
+          ALTER TABLE questions ADD COLUMN matching_pairs JSONB;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'questions' AND column_name = 'rubric') THEN
+          ALTER TABLE questions ADD COLUMN rubric JSONB;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'questions' AND column_name = 'allow_handwritten') THEN
+          ALTER TABLE questions ADD COLUMN allow_handwritten BOOLEAN DEFAULT TRUE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'questions' AND column_name = 'allow_typed') THEN
+          ALTER TABLE questions ADD COLUMN allow_typed BOOLEAN DEFAULT TRUE;
+        END IF;
+      EXCEPTION
+        WHEN OTHERS THEN
+          NULL;
+      END $$;
+    `;
+    await p.query(migrationSql);
+    schemaMigrationAttempted = true;
+    console.log('[PostgreSQL Schema] Successfully aligned questions table constraints and columns.');
+  } catch (err: any) {
+    console.warn('[PostgreSQL Schema Alignment Warning]:', err?.message || err);
+    schemaMigrationAttempted = true;
+  }
+}
+
+export interface TransactionClient {
+  query: <T = any>(text: string, params?: any[]) => Promise<{ rows: T[]; rowCount: number }>;
+}
+
+/**
+ * Execute operations within an atomic PostgreSQL transaction.
+ * Automatically issues BEGIN, commits on success, and rolls back on any error.
+ */
+export async function withTransaction<T>(
+  callback: (client: TransactionClient) => Promise<T>
+): Promise<T> {
+  const p = getPgPool();
+  if (p && hasPostgres) {
+    // Ensure table constraint is aligned before starting transaction
+    await ensureQuestionsSchemaConstraints();
+
+    const client = await p.connect();
+    try {
+      await client.query('BEGIN');
+      const txClient: TransactionClient = {
+        query: async <R = any>(text: string, params: any[] = []) => {
+          const res = await client.query(text, params);
+          return { rows: res.rows as R[], rowCount: res.rowCount ?? 0 };
+        },
+      };
+
+      const result = await callback(txClient);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rbErr) {
+        console.error('[PostgreSQL Rollback Error]:', rbErr);
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Offline local development fallback
+  if (!isProduction && !hasPostgres) {
+    return callback({
+      query: async <R = any>(text: string, params: any[] = []) => {
+        return executeLocalQuery<R>(text, params);
+      },
+    });
+  }
+
+  throw new Error(
+    'Database connection is not configured or unavailable. Please verify DATABASE_URL is set.'
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Primary Database Query Executor
 // ---------------------------------------------------------------------------

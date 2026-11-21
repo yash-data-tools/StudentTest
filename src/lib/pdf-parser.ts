@@ -3,18 +3,14 @@ import {
   getGeminiGenerateContentUrl,
   sanitizeGeminiError,
 } from '@/lib/ai-config';
+import {
+  QuestionType,
+  CANONICAL_QUESTION_TYPES,
+  normalizeQuestionType,
+  normalizeToleranceType,
+} from './question-types';
 
-export type QuestionType =
-  | 'mcq_single'
-  | 'mcq_multiple'
-  | 'numerical'
-  | 'true_false'
-  | 'short_answer'
-  | 'long_answer'
-  | 'derivation'
-  | 'diagram'
-  | 'assertion_reason'
-  | 'match_following';
+export type { QuestionType };
 
 export interface ExtractedQuestion {
   id?: string;
@@ -149,18 +145,7 @@ export function cleanAndParseJson<T = any>(raw: string): T {
 export function normalizeQuestions(rawQuestions: any[]): ExtractedQuestion[] {
   if (!Array.isArray(rawQuestions)) return [];
 
-  const validTypes: QuestionType[] = [
-    'mcq_single',
-    'mcq_multiple',
-    'numerical',
-    'true_false',
-    'short_answer',
-    'long_answer',
-    'derivation',
-    'diagram',
-    'assertion_reason',
-    'match_following',
-  ];
+  const validTypes = CANONICAL_QUESTION_TYPES;
 
   const cleaned: ExtractedQuestion[] = [];
 
@@ -174,7 +159,8 @@ export function normalizeQuestions(rawQuestions: any[]): ExtractedQuestion[] {
       continue;
     }
 
-    let qType: QuestionType = validTypes.includes(q.question_type) ? q.question_type : 'short_answer';
+    const normalizedResult = normalizeQuestionType(q.question_type, i + 1);
+    let qType: QuestionType = normalizedResult.valid && normalizedResult.questionType ? normalizedResult.questionType : 'short_answer';
 
     // Normalize options
     let options: { option_letter: string; option_text: string; is_correct: boolean }[] = [];
@@ -205,7 +191,7 @@ export function normalizeQuestions(rawQuestions: any[]): ExtractedQuestion[] {
       options,
       numerical_answer: q.numerical_answer !== undefined && q.numerical_answer !== null ? Number(q.numerical_answer) : null,
       numerical_tolerance: q.numerical_tolerance !== undefined ? Number(q.numerical_tolerance) : 0.01,
-      numerical_tolerance_type: q.numerical_tolerance_type || 'exact',
+      numerical_tolerance_type: normalizeToleranceType(q.numerical_tolerance_type),
       numerical_unit: q.numerical_unit ? String(q.numerical_unit).trim() : null,
       assertion_text: q.assertion_text ? String(q.assertion_text).trim() : null,
       reason_text: q.reason_text ? String(q.reason_text).trim() : null,
