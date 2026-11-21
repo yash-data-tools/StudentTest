@@ -1,3 +1,9 @@
+import {
+  resolveGeminiModel,
+  getGeminiGenerateContentUrl,
+  sanitizeGeminiError,
+} from '@/lib/ai-config';
+
 export interface QuickTestParams {
   subject: string;
   chapter: string;
@@ -101,26 +107,33 @@ Return strictly valid JSON with no markdown wrapping:
 }
 `;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
-        }),
-      });
+      const { candidatesToTry } = await resolveGeminiModel(apiKey);
+      for (const model of candidatesToTry) {
+        try {
+          const url = getGeminiGenerateContentUrl(model, apiKey);
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
+            }),
+          });
 
-      if (response.ok) {
-        const result = await response.json();
-        const rawJson = result.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawJson) {
-          const parsed = JSON.parse(rawJson);
-          if (parsed && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
-            // Guarantee total marks consistency
-            parsed.total_marks = targetMarks;
-            return parsed;
+          if (response.ok) {
+            const result = await response.json();
+            const rawJson = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (rawJson) {
+              const parsed = JSON.parse(rawJson);
+              if (parsed && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
+                // Guarantee total marks consistency
+                parsed.total_marks = targetMarks;
+                return parsed;
+              }
+            }
           }
+        } catch (mErr) {
+          console.warn(`[AI Services] Model ${model} quick-test failed:`, sanitizeGeminiError(mErr, apiKey));
         }
       }
     } catch (err) {
@@ -296,21 +309,28 @@ Return strictly valid JSON:
 }
 `;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.1 },
-        }),
-      });
+      const { candidatesToTry } = await resolveGeminiModel(apiKey);
+      for (const model of candidatesToTry) {
+        try {
+          const url = getGeminiGenerateContentUrl(model, apiKey);
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { responseMimeType: 'application/json', temperature: 0.1 },
+            }),
+          });
 
-      if (res.ok) {
-        const result = await res.json();
-        const rawJson = result.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawJson) {
-          return JSON.parse(rawJson);
+          if (res.ok) {
+            const result = await res.json();
+            const rawJson = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (rawJson) {
+              return JSON.parse(rawJson);
+            }
+          }
+        } catch (mErr) {
+          console.warn(`[AI Services] Model ${model} evaluation failed:`, sanitizeGeminiError(mErr, apiKey));
         }
       }
     } catch (err) {

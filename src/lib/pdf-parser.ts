@@ -1,3 +1,9 @@
+import {
+  resolveGeminiModel,
+  getGeminiGenerateContentUrl,
+  sanitizeGeminiError,
+} from '@/lib/ai-config';
+
 export type QuestionType =
   | 'mcq_single'
   | 'mcq_multiple'
@@ -260,7 +266,7 @@ export async function parsePdfToExam(
         console.warn('[PDF Extraction Pipeline] Gemini completed but returned 0 questions.');
       }
     } catch (err: any) {
-      aiError = err?.message || 'Gemini API call failed';
+      aiError = sanitizeGeminiError(err?.message || 'Gemini API call failed', apiKey);
       console.error('[PDF Extraction Pipeline] Gemini parsing error:', aiError);
     }
   } else {
@@ -386,12 +392,17 @@ CRITICAL RULES (STRICT SOURCE ACCURACY - NO HALLUCINATIONS):
     });
   }
 
-  const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  const resolution = await resolveGeminiModel(apiKey);
+  console.log(
+    `[Gemini Model Selection] Selected model: ${resolution.selectedModel} (Verified via API: ${resolution.verifiedViaApi})`
+  );
+
+  const modelsToTry = resolution.candidatesToTry;
   let lastError: Error | null = null;
 
   for (const model of modelsToTry) {
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const url = getGeminiGenerateContentUrl(model, apiKey);
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -406,7 +417,11 @@ CRITICAL RULES (STRICT SOURCE ACCURACY - NO HALLUCINATIONS):
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Gemini (${model}) returned HTTP ${response.status}: ${errorText}`);
+        const safeError = sanitizeGeminiError(
+          `Gemini (${model}) returned HTTP ${response.status}: ${errorText}`,
+          apiKey
+        );
+        throw new Error(safeError);
       }
 
       const result = await response.json();
@@ -445,8 +460,9 @@ CRITICAL RULES (STRICT SOURCE ACCURACY - NO HALLUCINATIONS):
 
       return { data: examData, model };
     } catch (err: any) {
-      lastError = err;
-      console.warn(`[Gemini Attempt] Model ${model} failed: ${err.message}. Trying next fallback...`);
+      const safeMessage = sanitizeGeminiError(err?.message, apiKey);
+      lastError = new Error(safeMessage);
+      console.warn(`[Gemini Attempt] Model ${model} failed: ${safeMessage}. Trying next fallback...`);
     }
   }
 
