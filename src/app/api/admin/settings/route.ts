@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, logActivity } from '@/lib/auth';
-import { readLocalDB, writeLocalDB } from '@/lib/db';
+import { query } from '@/lib/db';
 
 export async function GET() {
   try {
@@ -9,8 +9,12 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
-    const db = readLocalDB();
-    const regMode = db.system_settings.find(s => s.key === 'registration_mode')?.value || 'open';
+    const res = await query(`SELECT value FROM system_settings WHERE key = 'registration_mode'`);
+    let regMode = 'open';
+    if (res.rowCount > 0) {
+      const val = res.rows[0].value;
+      regMode = typeof val === 'string' ? val.replace(/"/g, '') : val;
+    }
 
     return NextResponse.json({
       success: true,
@@ -38,16 +42,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid registration mode setting.' }, { status: 400 });
     }
 
-    const db = readLocalDB();
-    let setting = db.system_settings.find(s => s.key === 'registration_mode');
-    if (!setting) {
-      setting = { key: 'registration_mode', value: registration_mode };
-      db.system_settings.push(setting);
-    } else {
-      setting.value = registration_mode;
-    }
-
-    writeLocalDB(db);
+    await query(
+      `INSERT INTO system_settings (key, value, updated_at)
+       VALUES ('registration_mode', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify(registration_mode)]
+    );
 
     await logActivity(user.id, 'settings_updated', { registration_mode });
 

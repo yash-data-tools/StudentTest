@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { logIntegrityEvent, readLocalDB } from '@/lib/db';
+import { logIntegrityEvent, query } from '@/lib/db';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -13,22 +13,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const body = await req.json();
     const { event_type, duration_seconds, metadata } = body;
 
-    const db = readLocalDB();
-    const attempt = db.test_attempts.find(a => a.id === attemptId && a.student_id === user.id);
-    if (!attempt) {
+    const attemptRes = await query(
+      `SELECT test_id FROM test_attempts WHERE id = $1 AND student_id = $2`,
+      [attemptId, user.id]
+    );
+
+    if (attemptRes.rowCount === 0) {
       return NextResponse.json({ error: 'Attempt not found' }, { status: 404 });
     }
+
+    const testId = attemptRes.rows[0].test_id;
 
     const event = await logIntegrityEvent(
       attemptId,
       user.id,
-      attempt.test_id,
+      testId,
       event_type || 'unknown_event',
       duration_seconds || 0,
       metadata || {}
     );
 
-    return NextResponse.json({ success: true, eventId: event.id });
+    return NextResponse.json({ success: true, eventId: event?.id });
   } catch (error: any) {
     console.error('Integrity event log error:', error);
     return NextResponse.json({ error: 'Failed to log integrity event' }, { status: 500 });

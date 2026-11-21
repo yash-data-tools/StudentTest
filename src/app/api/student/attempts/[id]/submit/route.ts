@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, logActivity } from '@/lib/auth';
-import { readLocalDB, writeLocalDB, saveSingleStudentResponse } from '@/lib/db';
+import { query, saveSingleStudentResponse } from '@/lib/db';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -13,21 +13,42 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const body = await req.json();
     const { answers, time_spent_seconds, is_auto_submitted } = body;
 
-    const db = readLocalDB();
-    const attempt = db.test_attempts.find(a => a.id === attemptId && a.student_id === user.id);
-    if (!attempt) {
+    // 1. Fetch attempt and verify student ownership
+    const attemptRes = await query(
+      `SELECT * FROM test_attempts WHERE id = $1 AND student_id = $2`,
+      [attemptId, user.id]
+    );
+
+    if (attemptRes.rowCount === 0) {
       return NextResponse.json({ error: 'Exam attempt not found' }, { status: 404 });
     }
+    const attempt = attemptRes.rows[0];
 
-    const test = db.tests.find(t => t.id === attempt.test_id);
-    if (!test) {
+    // 2. Fetch associated test
+    const testRes = await query(`SELECT * FROM tests WHERE id = $1`, [attempt.test_id]);
+    if (testRes.rowCount === 0) {
       return NextResponse.json({ error: 'Associated test not found' }, { status: 404 });
     }
+    const test = testRes.rows[0];
 
-    const questions = db.questions.filter(q => q.test_id === test.id);
-    const options = db.question_options.filter(o => questions.some(q => q.id === o.question_id));
+    // 3. Fetch questions and options
+    const questionsRes = await query(
+      `SELECT * FROM questions WHERE test_id = $1 ORDER BY order_index ASC`,
+      [test.id]
+    );
+    const questions = questionsRes.rows;
 
-    // Save all student answers
+    const questionIds = questions.map((q: any) => q.id);
+    let options: any[] = [];
+    if (questionIds.length > 0) {
+      const optionsRes = await query(
+        `SELECT * FROM question_options WHERE question_id = ANY($1::uuid[]) ORDER BY order_index ASC`,
+        [questionIds]
+      );
+      options = optionsRes.rows;
+    }
+
+    // 4. Save any pending student answers
     if (answers && typeof answers === 'object') {
       for (const qId of Object.keys(answers)) {
         const ans = answers[qId];
@@ -42,72 +63,112 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
     }
 
-    // -------------------------------------------------------------
-    // AUTOMATIC EVALUATION ENGINE (Phase 5 Integrated)
-    // -------------------------------------------------------------
+    // Fetch updated responses
+    const responsesRes = await query(
+      `SELECT * FROM student_responses WHERE attempt_id = $1`,
+      [attemptId]
+    );
+    const savedResponses = responsesRes.rows;
+
+    // 5. Automatic Evaluation Engine
     let academicScore = 0;
     let correctCount = 0;
     let wrongCount = 0;
     let unattemptedCount = 0;
 
     for (const q of questions) {
-      const resp = db.student_responses.find(r => r.attempt_id === attemptId && r.question_id === q.id);
+      const resp = savedResponses.find((r: any) => r.question_id === q.id);
       const qMarks = Number(q.marks) || 1;
       const qNegMarks = Number(q.negative_marks) || 0;
 
       if (!resp || !resp.is_answered) {
         unattemptedCount++;
-        if (resp) resp.marks_awarded = 0;
+        if (resp) {
+          await query(
+            `UPDATE student_responses SET marks_awarded = 0, is_correct = null, updated_at = NOW() WHERE id = $1`,
+            [resp.id]
+          );
+        }
         continue;
       }
 
-      // 1. Single Correct MCQ, True/False & Assertion-Reason
+      // Single Correct MCQ, True/False & Assertion-Reason
       if (
         q.question_type === 'mcq_single' ||
         q.question_type === 'true_false' ||
         q.question_type === 'assertion_reason'
       ) {
-        const correctOpt = options.find(o => o.question_id === q.id && o.is_correct);
-        const studentSelected = resp.selected_options; // e.g. "A" or ["A"]
+        const correctOpt = options.find((o: any) => o.question_id === q.id && o.is_correct);
+        let studentSelected = resp.selected_options;
+        if (typeof studentSelected === 'string') {
+          try {
+            studentSelected = JSON.parse(studentSelected);
+          } catch {
+            // keep as string
+          }
+        }
         const selectedLetter = Array.isArray(studentSelected) ? studentSelected[0] : studentSelected;
 
-        if (correctOpt && selectedLetter && selectedLetter.toUpperCase() === correctOpt.option_letter.toUpperCase()) {
+        if (
+          correctOpt &&
+          selectedLetter &&
+          String(selectedLetter).toUpperCase() === String(correctOpt.option_letter).toUpperCase()
+        ) {
           academicScore += qMarks;
-          resp.is_correct = true;
-          resp.marks_awarded = qMarks;
           correctCount++;
+          await query(
+            `UPDATE student_responses SET is_correct = true, marks_awarded = $1, updated_at = NOW() WHERE id = $2`,
+            [qMarks, resp.id]
+          );
         } else {
           academicScore -= qNegMarks;
-          resp.is_correct = false;
-          resp.marks_awarded = -qNegMarks;
           wrongCount++;
+          await query(
+            `UPDATE student_responses SET is_correct = false, marks_awarded = $1, updated_at = NOW() WHERE id = $2`,
+            [-qNegMarks, resp.id]
+          );
         }
       }
-      // 2. Multiple Correct MCQ
+      // Multiple Correct MCQ
       else if (q.question_type === 'mcq_multiple') {
         const correctLetters = options
-          .filter(o => o.question_id === q.id && o.is_correct)
-          .map(o => o.option_letter.toUpperCase())
+          .filter((o: any) => o.question_id === q.id && o.is_correct)
+          .map((o: any) => o.option_letter.toUpperCase())
           .sort();
-        const studentLetters = (Array.isArray(resp.selected_options) ? resp.selected_options : [resp.selected_options])
-          .map((s: string) => s?.toUpperCase())
-          .filter(Boolean)
-          .sort();
+
+        let studentLetters: string[] = [];
+        let rawSelected = resp.selected_options;
+        if (typeof rawSelected === 'string') {
+          try {
+            rawSelected = JSON.parse(rawSelected);
+          } catch {
+            // raw string
+          }
+        }
+        if (Array.isArray(rawSelected)) {
+          studentLetters = rawSelected.map((s: any) => String(s).toUpperCase()).sort();
+        } else if (rawSelected) {
+          studentLetters = [String(rawSelected).toUpperCase()];
+        }
 
         const isExact = JSON.stringify(correctLetters) === JSON.stringify(studentLetters);
         if (isExact) {
           academicScore += qMarks;
-          resp.is_correct = true;
-          resp.marks_awarded = qMarks;
           correctCount++;
+          await query(
+            `UPDATE student_responses SET is_correct = true, marks_awarded = $1, updated_at = NOW() WHERE id = $2`,
+            [qMarks, resp.id]
+          );
         } else {
           academicScore -= qNegMarks;
-          resp.is_correct = false;
-          resp.marks_awarded = -qNegMarks;
           wrongCount++;
+          await query(
+            `UPDATE student_responses SET is_correct = false, marks_awarded = $1, updated_at = NOW() WHERE id = $2`,
+            [-qNegMarks, resp.id]
+          );
         }
       }
-      // 3. Numerical Value
+      // Numerical
       else if (q.question_type === 'numerical') {
         const studentNum = Number(resp.numerical_response);
         const targetNum = Number(q.numerical_answer);
@@ -126,51 +187,58 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
         if (isCorrect) {
           academicScore += qMarks;
-          resp.is_correct = true;
-          resp.marks_awarded = qMarks;
           correctCount++;
+          await query(
+            `UPDATE student_responses SET is_correct = true, marks_awarded = $1, updated_at = NOW() WHERE id = $2`,
+            [qMarks, resp.id]
+          );
         } else {
           academicScore -= qNegMarks;
-          resp.is_correct = false;
-          resp.marks_awarded = -qNegMarks;
           wrongCount++;
+          await query(
+            `UPDATE student_responses SET is_correct = false, marks_awarded = $1, updated_at = NOW() WHERE id = $2`,
+            [-qNegMarks, resp.id]
+          );
         }
       }
-      // 4. Descriptive / Handwritten Answers (Held for Teacher Review)
-      else if (
-        q.question_type === 'short_answer' ||
-        q.question_type === 'long_answer' ||
-        q.question_type === 'derivation' ||
-        q.question_type === 'diagram' ||
-        q.question_type === 'match_following'
-      ) {
-        // Will be evaluated in teacher review mode
-        resp.is_correct = null;
-        resp.marks_awarded = 0;
+      // Descriptive / Handwritten / Derivation (Held for Teacher Review)
+      else {
+        await query(
+          `UPDATE student_responses SET is_correct = null, marks_awarded = 0, updated_at = NOW() WHERE id = $1`,
+          [resp.id]
+        );
       }
     }
 
-    // Ensure score doesn't drop below 0 unless negative scoring is explicitly unrestricted
     const boundedAcademicScore = Math.max(0, academicScore);
     const totalMarks = Number(test.total_marks) || 1;
     const percentage = Math.round((boundedAcademicScore / totalMarks) * 100);
 
-    // Update Attempt Record
-    attempt.time_spent_seconds = Number(time_spent_seconds) || 0;
-    attempt.submitted_at = new Date().toISOString();
-    attempt.is_auto_submitted = Boolean(is_auto_submitted);
-    attempt.provisional_academic_score = boundedAcademicScore;
-    attempt.percentage = percentage;
-
-    // Check Exam Mode Routing:
-    // Mode A: teacher_reviewed -> hold marks, send to pending_review
-    // Mode B: instant_quick_test -> immediately finalize score
     const isQuickTest = test.exam_mode === 'instant_quick_test';
-    attempt.status = isQuickTest ? 'evaluated' : 'pending_review';
-    attempt.final_score = isQuickTest ? boundedAcademicScore : 0;
-    attempt.updated_at = new Date().toISOString();
+    const newStatus = isQuickTest ? 'evaluated' : 'pending_review';
+    const finalScore = isQuickTest ? boundedAcademicScore : 0;
 
-    writeLocalDB(db);
+    await query(
+      `UPDATE test_attempts
+       SET time_spent_seconds = $1,
+           submitted_at = NOW(),
+           is_auto_submitted = $2,
+           provisional_academic_score = $3,
+           percentage = $4,
+           status = $5,
+           final_score = $6,
+           updated_at = NOW()
+       WHERE id = $7`,
+      [
+        Number(time_spent_seconds) || 0,
+        Boolean(is_auto_submitted),
+        boundedAcademicScore,
+        percentage,
+        newStatus,
+        finalScore,
+        attemptId,
+      ]
+    );
 
     await logActivity(user.id, is_auto_submitted ? 'auto_submitted' : 'test_submitted', {
       test_id: test.id,
@@ -178,7 +246,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       exam_mode: test.exam_mode,
       score: boundedAcademicScore,
       percentage,
-      time_spent: attempt.time_spent_seconds,
+      time_spent: Number(time_spent_seconds) || 0,
     });
 
     const redirectUrl = isQuickTest

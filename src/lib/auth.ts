@@ -134,17 +134,22 @@ export async function logActivity(userId: string | null, eventType: string, meta
 
 // 6. Initial Admin Seeding
 export async function ensureAdminExists() {
-  const adminUsername = process.env.ADMIN_INITIAL_USERNAME || 'admin';
-  const defaultPassword = process.env.ADMIN_INITIAL_PASSWORD || 'Admin@12345';
+  try {
+    const adminUsername = process.env.ADMIN_INITIAL_USERNAME || 'admin';
+    const defaultPassword = process.env.ADMIN_INITIAL_PASSWORD || 'Admin@12345';
 
-  const res = await query('SELECT * FROM users WHERE role = $1', ['admin']);
-  if (res.rowCount === 0) {
-    const hashed = await hashPassword(defaultPassword);
-    await query(
-      `INSERT INTO users (username, password_hash, role, real_name, school, status, must_change_password)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [adminUsername, hashed, 'admin', 'Head Tutor / Administrator', 'Main Tuition Academy', 'active', false]
-    );
-    console.log(`[Admin Seeding] Created default admin account: ${adminUsername}`);
+    // Check if any admin exists in the database
+    const res = await query('SELECT id FROM users WHERE role = $1 LIMIT 1', ['admin']);
+    if (res.rowCount === 0) {
+      const hashed = await hashPassword(defaultPassword);
+      await query(
+        `INSERT INTO users (username, password_hash, role, real_name, school, status, must_change_password)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [adminUsername, hashed, 'admin', 'Head Tutor / Administrator', 'Main Tuition Academy', 'active', false]
+      );
+      console.log(`[Admin Seeding] Created default admin account: ${adminUsername}`);
+    }
+  } catch (err) {
+    console.warn('[Admin Seeding Warning]: Could not seed initial admin account:', err);
   }
 }

@@ -1,8 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { readLocalDB, saveAnswerAttachment, deleteAnswerAttachment, reorderAnswerAttachments, getAnswerAttachments } from '@/lib/db';
-import fs from 'fs';
-import path from 'path';
+import {
+  query,
+  saveAnswerAttachment,
+  deleteAnswerAttachment,
+  reorderAnswerAttachments,
+  getAnswerAttachments,
+} from '@/lib/db';
+
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+
+    const { id: attemptId } = await params;
+    const { searchParams } = new URL(req.url);
+    const questionId = searchParams.get('question_id') || undefined;
+
+    const attachments = await getAnswerAttachments(attemptId, questionId);
+    return NextResponse.json({ success: true, attachments });
+  } catch (error: any) {
+    console.error('Get attachments error:', error);
+    return NextResponse.json({ error: 'Failed to fetch attachments' }, { status: 500 });
+  }
+}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -12,14 +35,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     const { id: attemptId } = await params;
-    const db = readLocalDB();
-    const attempt = db.test_attempts.find(a => a.id === attemptId && a.student_id === user.id);
-    if (!attempt) {
+
+    // Verify active attempt belongs to student
+    const attemptRes = await query(
+      `SELECT * FROM test_attempts WHERE id = $1 AND student_id = $2`,
+      [attemptId, user.id]
+    );
+
+    if (attemptRes.rowCount === 0) {
       return NextResponse.json({ error: 'Active exam attempt not found' }, { status: 404 });
     }
 
+    const attempt = attemptRes.rows[0];
     if (attempt.status !== 'in_progress') {
-      return NextResponse.json({ error: 'This exam has already been submitted.' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'This exam has already been submitted.' },
+        { status: 400 }
+      );
     }
 
     const formData = await req.formData();
@@ -48,23 +80,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
-    // Ensure uploads directory exists in both public/uploads and .data/uploads
-    const publicDir = path.join(process.cwd(), 'public', 'uploads', 'answers', attemptId);
-    const dataDir = path.join(process.cwd(), '.data', 'uploads', 'answers', attemptId);
-    fs.mkdirSync(publicDir, { recursive: true });
-    fs.mkdirSync(dataDir, { recursive: true });
+    // Convert to Base64 data URL for durable, serverless-safe storage without filesystem dependency
+    const arrayBuffer = await file.arrayBuffer();
+    const base64Data = Buffer.from(arrayBuffer).toString('base64');
+    const fileUrl = `data:${file.type};base64,${base64Data}`;
 
-    const fileExt = path.extname(file.name) || '.jpg';
-    const uniqueFileName = `${questionId}_page_${Date.now()}_${Math.random().toString(36).substring(2, 7)}${fileExt}`;
-    
-    const publicFilePath = path.join(publicDir, uniqueFileName);
-    const dataFilePath = path.join(dataDir, uniqueFileName);
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    fs.writeFileSync(publicFilePath, buffer);
-    fs.writeFileSync(dataFilePath, buffer);
-
-    const fileUrl = `/uploads/answers/${attemptId}/${uniqueFileName}`;
     const pageOrder = pageOrderStr ? parseInt(pageOrderStr, 10) : undefined;
 
     const attachment = await saveAnswerAttachment({
@@ -73,7 +93,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       test_id: attempt.test_id,
       question_id: questionId,
       file_url: fileUrl,
-      storage_path: dataFilePath,
+      storage_path: 'base64_embedded',
       file_name: file.name,
       file_size: file.size,
       mime_type: file.type,
@@ -102,12 +122,18 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const attachmentId = searchParams.get('attachment_id');
 
     if (!attachmentId) {
-      return NextResponse.json({ error: 'attachment_id query param is required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'attachment_id query param is required' },
+        { status: 400 }
+      );
     }
 
     const success = await deleteAnswerAttachment(attachmentId, user.id);
     if (!success) {
-      return NextResponse.json({ error: 'Attachment not found or not owned by student' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Attachment not found or not owned by student' },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json({ success: true, message: 'Attachment deleted successfully' });
@@ -129,7 +155,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const { question_id, ordered_ids } = body;
 
     if (!question_id || !Array.isArray(ordered_ids)) {
-      return NextResponse.json({ error: 'question_id and ordered_ids array are required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'question_id and ordered_ids array are required' },
+        { status: 400 }
+      );
     }
 
     const updated = await reorderAnswerAttachments(attemptId, question_id, ordered_ids);

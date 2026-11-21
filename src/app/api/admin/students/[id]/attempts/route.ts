@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { readLocalDB } from '@/lib/db';
+import { query } from '@/lib/db';
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await getCurrentUser();
     if (!user || user.role !== 'admin') {
@@ -13,47 +10,50 @@ export async function GET(
     }
 
     const { id: studentId } = await params;
-    const db = readLocalDB();
 
-    const student = db.users.find((u) => u.id === studentId);
-    if (!student) {
+    const studentRes = await query(
+      `SELECT id, real_name, username, school FROM users WHERE id = $1 AND role = 'student'`,
+      [studentId]
+    );
+
+    if (studentRes.rowCount === 0) {
       return NextResponse.json({ error: 'Student not found' }, { status: 404 });
     }
+    const student = studentRes.rows[0];
 
-    const attempts = db.test_attempts
-      .filter((a) => a.student_id === studentId)
-      .map((a) => {
-        const test = db.tests.find((t) => t.id === a.test_id);
-        const integrityCount = db.integrity_events.filter(
-          (e) => e.attempt_id === a.id
-        ).length;
+    const attemptsRes = await query(
+      `SELECT a.id, a.test_id, a.status, a.started_at, a.submitted_at,
+              a.time_spent_seconds, a.final_score, a.total_marks_possible, a.percentage,
+              COALESCE(t.title, 'Unknown Test') AS test_title,
+              COALESCE(t.subject, 'General') AS subject,
+              COALESCE(t.exam_mode, 'instant_quick_test') AS exam_mode,
+              (SELECT COUNT(*)::int FROM integrity_events e WHERE e.attempt_id = a.id) AS integrity_count
+       FROM test_attempts a
+       LEFT JOIN tests t ON t.id = a.test_id
+       WHERE a.student_id = $1
+       ORDER BY a.started_at DESC`,
+      [studentId]
+    );
 
-        return {
-          id: a.id,
-          test_id: a.test_id,
-          test_title: test?.title || 'Unknown Test',
-          subject: test?.subject || 'General',
-          exam_mode: test?.exam_mode || 'instant_quick_test',
-          status: a.status,
-          started_at: a.started_at,
-          submitted_at: a.submitted_at,
-          time_spent_seconds: a.time_spent_seconds,
-          final_score: a.final_score,
-          total_marks_possible: a.total_marks_possible,
-          percentage: a.percentage,
-          integrity_count: integrityCount,
-        };
-      })
-      .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+    const attempts = attemptsRes.rows.map((a: any) => ({
+      id: a.id,
+      test_id: a.test_id,
+      test_title: a.test_title,
+      subject: a.subject,
+      exam_mode: a.exam_mode,
+      status: a.status,
+      started_at: a.started_at,
+      submitted_at: a.submitted_at,
+      time_spent_seconds: Number(a.time_spent_seconds) || 0,
+      final_score: Number(a.final_score) || 0,
+      total_marks_possible: Number(a.total_marks_possible) || 0,
+      percentage: Number(a.percentage) || 0,
+      integrity_count: Number(a.integrity_count) || 0,
+    }));
 
     return NextResponse.json({
       success: true,
-      student: {
-        id: student.id,
-        real_name: student.real_name,
-        username: student.username,
-        school: student.school,
-      },
+      student,
       attempts,
     });
   } catch (error: any) {

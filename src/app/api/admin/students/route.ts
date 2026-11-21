@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, hashPassword, logActivity } from '@/lib/auth';
-import { getStudentsList, query, readLocalDB } from '@/lib/db';
+import { getStudentsList, query } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
   try {
@@ -32,7 +32,10 @@ export async function POST(req: NextRequest) {
     const { real_name, school, username, password, must_change_password } = body;
 
     if (!real_name?.trim() || !username?.trim() || !password) {
-      return NextResponse.json({ error: 'Name, username, and password are required.' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Name, username, and password are required.' },
+        { status: 400 }
+      );
     }
 
     const cleanUsername = username.trim().toLowerCase();
@@ -45,9 +48,18 @@ export async function POST(req: NextRequest) {
 
     const passwordHash = await hashPassword(password);
     const insertRes = await query(
-      `INSERT INTO users (username, password_hash, role, real_name, school, status, must_change_password)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [cleanUsername, passwordHash, 'student', real_name.trim(), school?.trim() || '', 'active', Boolean(must_change_password)]
+      `INSERT INTO users (username, password_hash, role, real_name, school, status, must_change_password, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+       RETURNING id, username, real_name, school, status, must_change_password, created_at`,
+      [
+        cleanUsername,
+        passwordHash,
+        'student',
+        real_name.trim(),
+        school?.trim() || '',
+        'active',
+        Boolean(must_change_password),
+      ]
     );
 
     const newStudent = insertRes.rows[0];

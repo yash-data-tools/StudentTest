@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, logActivity } from '@/lib/auth';
-import { readLocalDB, writeLocalDB } from '@/lib/db';
+import { query } from '@/lib/db';
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -13,20 +13,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const body = await req.json();
     const { status, start_date, end_date, title, duration_minutes } = body;
 
-    const db = readLocalDB();
-    const test = db.tests.find(t => t.id === testId);
-    if (!test) {
+    const testRes = await query(`SELECT * FROM tests WHERE id = $1`, [testId]);
+    if (testRes.rowCount === 0) {
       return NextResponse.json({ error: 'Test not found' }, { status: 404 });
     }
 
-    if (status !== undefined) test.status = status;
-    if (start_date !== undefined) test.start_date = start_date;
-    if (end_date !== undefined) test.end_date = end_date;
-    if (title !== undefined) test.title = title.trim();
-    if (duration_minutes !== undefined) test.duration_minutes = Number(duration_minutes);
-    test.updated_at = new Date().toISOString();
+    const updatedRes = await query(
+      `UPDATE tests
+       SET status = COALESCE($1, status),
+           start_date = COALESCE($2, start_date),
+           end_date = COALESCE($3, end_date),
+           title = COALESCE($4, title),
+           duration_minutes = COALESCE($5, duration_minutes),
+           updated_at = NOW()
+       WHERE id = $6
+       RETURNING *`,
+      [
+        status !== undefined ? status : null,
+        start_date !== undefined ? start_date : null,
+        end_date !== undefined ? end_date : null,
+        title !== undefined ? title.trim() : null,
+        duration_minutes !== undefined ? Number(duration_minutes) : null,
+        testId,
+      ]
+    );
 
-    writeLocalDB(db);
+    const test = updatedRes.rows[0];
 
     await logActivity(user.id, 'test_status_updated', {
       test_id: testId,
@@ -54,22 +66,16 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
 
     const { id: testId } = await params;
-    const db = readLocalDB();
 
-    const tIdx = db.tests.findIndex(t => t.id === testId);
-    if (tIdx === -1) {
+    const deleteRes = await query(`DELETE FROM tests WHERE id = $1 RETURNING id, title`, [testId]);
+    if (deleteRes.rowCount === 0) {
       return NextResponse.json({ error: 'Test not found' }, { status: 404 });
     }
 
-    db.tests.splice(tIdx, 1);
-    // Remove questions & options
-    const qIds = db.questions.filter(q => q.test_id === testId).map(q => q.id);
-    db.questions = db.questions.filter(q => q.test_id !== testId);
-    db.question_options = db.question_options.filter(o => !qIds.includes(o.question_id));
-
-    writeLocalDB(db);
-
-    await logActivity(user.id, 'test_deleted', { test_id: testId });
+    await logActivity(user.id, 'test_deleted', {
+      test_id: testId,
+      title: deleteRes.rows[0].title,
+    });
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

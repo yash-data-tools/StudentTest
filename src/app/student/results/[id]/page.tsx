@@ -1,5 +1,5 @@
 import { getCurrentUser } from '@/lib/auth';
-import { readLocalDB } from '@/lib/db';
+import { getStudentExamResultData } from '@/lib/db';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -22,19 +22,12 @@ export default async function StudentResultScorecardPage({ params }: { params: P
     redirect('/login');
   }
 
-  const db = readLocalDB();
-  const attempt = db.test_attempts.find(a => a.id === attemptId && a.student_id === user.id);
-  if (!attempt) {
+  const resultData = await getStudentExamResultData(attemptId, user.id);
+  if (!resultData || !resultData.attempt) {
     redirect('/student/dashboard');
   }
 
-  const test = db.tests.find(t => t.id === attempt.test_id);
-  const questions = db.questions
-    .filter(q => q.test_id === attempt.test_id)
-    .sort((a, b) => a.order_index - b.order_index);
-  const options = db.question_options.filter(o => questions.some(q => q.id === o.question_id));
-  const responses = db.student_responses.filter(r => r.attempt_id === attempt.id);
-  const attachments = (db.answer_attachments || []).filter(a => a.attempt_id === attempt.id);
+  const { attempt, test, questions, options, responses, attachments } = resultData;
 
   // If teacher reviewed exam is not yet published by teacher, redirect to submitted notice
   if (test?.exam_mode === 'teacher_reviewed' && attempt.status !== 'published') {

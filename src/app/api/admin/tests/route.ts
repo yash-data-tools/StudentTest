@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, logActivity } from '@/lib/auth';
-import { readLocalDB, writeLocalDB } from '@/lib/db';
+import { query } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
   try {
@@ -9,21 +9,23 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
-    const db = readLocalDB();
-    const tests = db.tests.map(t => {
-      const qCount = db.questions.filter(q => q.test_id === t.id).length;
-      const attemptCount = db.test_attempts.filter(a => a.test_id === t.id).length;
-      return {
-        ...t,
-        question_count: qCount,
-        total_attempts: attemptCount,
-      };
-    });
+    const res = await query(`
+      SELECT t.*,
+             (SELECT COUNT(*)::int FROM questions q WHERE q.test_id = t.id) AS question_count,
+             (SELECT COUNT(*)::int FROM test_attempts a WHERE a.test_id = t.id) AS total_attempts
+      FROM tests t
+      ORDER BY t.created_at DESC
+    `);
 
-    return NextResponse.json({
-      success: true,
-      tests: tests.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
-    });
+    const tests = res.rows.map((t: any) => ({
+      ...t,
+      total_marks: Number(t.total_marks),
+      duration_minutes: Number(t.duration_minutes),
+      question_count: Number(t.question_count) || 0,
+      total_attempts: Number(t.total_attempts) || 0,
+    }));
+
+    return NextResponse.json({ success: true, tests });
   } catch (error: any) {
     console.error('Fetch tests error:', error);
     return NextResponse.json({ error: 'Failed to fetch tests' }, { status: 500 });
@@ -50,6 +52,9 @@ export async function POST(req: NextRequest) {
       duration_minutes,
       exam_mode,
       status,
+      start_date,
+      end_date,
+      max_attempts,
       negative_marking_enabled,
       shuffle_questions,
       shuffle_options,
@@ -57,111 +62,135 @@ export async function POST(req: NextRequest) {
       questions,
     } = body;
 
-    if (!title || !subject || !questions || questions.length === 0) {
-      return NextResponse.json({ error: 'Test title, subject, and at least one question are required.' }, { status: 400 });
+    if (!title || !subject || !questions || !Array.isArray(questions) || questions.length === 0) {
+      return NextResponse.json(
+        { error: 'Test title, subject, and at least one question are required.' },
+        { status: 400 }
+      );
     }
 
-    const db = readLocalDB();
-    const testId = crypto.randomUUID();
+    const computedTotalMarks =
+      Number(total_marks) ||
+      questions.reduce((acc: number, q: any) => acc + (Number(q.marks) || 1), 0);
 
-    const newTest = {
-      id: testId,
-      title: title.trim(),
-      subject: subject.trim(),
-      chapter: chapter?.trim() || '',
-      topic: topic?.trim() || '',
-      class_grade: class_grade?.trim() || '',
-      description: description?.trim() || '',
-      instructions: instructions?.trim() || '',
-      total_marks: Number(total_marks) || questions.reduce((acc: number, q: any) => acc + (Number(q.marks) || 1), 0),
-      duration_minutes: Number(duration_minutes) || 60,
-      exam_mode: exam_mode || 'teacher_reviewed',
-      status: status || 'published',
-      start_date: body.start_date || null,
-      end_date: body.end_date || null,
-      max_attempts: Number(body.max_attempts) || 1,
-      negative_marking_enabled: Boolean(negative_marking_enabled),
-      shuffle_questions: Boolean(shuffle_questions),
-      shuffle_options: Boolean(shuffle_options),
-      anti_cheat_settings: anti_cheat_settings || {
-        fullscreen_required: false,
-        tab_monitoring: true,
-        clipboard_monitoring: true,
-        context_menu_disabled: true,
-        keyboard_monitoring: true,
-        idle_monitoring: true,
-      },
-      created_by: user.id,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    const testRes = await query(
+      `INSERT INTO tests (
+        title, subject, chapter, topic, class_grade, description, instructions,
+        total_marks, duration_minutes, exam_mode, status, start_date, end_date,
+        max_attempts, negative_marking_enabled, shuffle_questions, shuffle_options,
+        anti_cheat_settings, created_by, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
+      RETURNING *`,
+      [
+        title.trim(),
+        subject.trim(),
+        chapter?.trim() || '',
+        topic?.trim() || '',
+        class_grade?.trim() || '',
+        description?.trim() || '',
+        instructions?.trim() || '',
+        computedTotalMarks,
+        Number(duration_minutes) || 60,
+        exam_mode || 'teacher_reviewed',
+        status || 'published',
+        start_date || null,
+        end_date || null,
+        Number(max_attempts) || 1,
+        Boolean(negative_marking_enabled),
+        Boolean(shuffle_questions),
+        Boolean(shuffle_options),
+        JSON.stringify(
+          anti_cheat_settings || {
+            fullscreen_required: false,
+            tab_monitoring: true,
+            clipboard_monitoring: true,
+            context_menu_disabled: true,
+            keyboard_monitoring: true,
+            idle_monitoring: true,
+          }
+        ),
+        user.id,
+      ]
+    );
 
-    db.tests.push(newTest);
+    const createdTest = testRes.rows[0];
+    const testId = createdTest.id;
 
-    // Save questions and options
+    // Insert questions and options
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
-      const qId = crypto.randomUUID();
+      const qNum = i + 1;
 
-      const newQ = {
-        id: qId,
-        test_id: testId,
-        question_number: i + 1,
-        question_text: q.question_text,
-        question_type: q.question_type || 'mcq_single',
-        marks: Number(q.marks) || 1,
-        negative_marks: Number(q.negative_marks) || 0,
-        explanation: q.explanation || '',
-        numerical_answer: q.numerical_answer !== undefined && q.numerical_answer !== null ? Number(q.numerical_answer) : null,
-        numerical_tolerance: q.numerical_tolerance !== undefined ? Number(q.numerical_tolerance) : 0,
-        numerical_tolerance_type: q.numerical_tolerance_type || 'exact',
-        numerical_unit: q.numerical_unit || null,
-        assertion_text: q.assertion_text || null,
-        reason_text: q.reason_text || null,
-        matching_pairs: q.matching_pairs || null,
-        rubric: q.rubric || null,
-        allow_handwritten: q.allow_handwritten !== false,
-        allow_typed: q.allow_typed !== false,
-        image_url: q.image_url || null,
-        correct_answer: q.correct_answer || q.correct_answer_text || null,
-        ai_confidence: q.ai_confidence || 1.0,
-        requires_verification: Boolean(q.requires_verification),
-        order_index: i,
-        created_at: new Date().toISOString(),
-      };
+      const qRes = await query(
+        `INSERT INTO questions (
+          test_id, question_number, question_text, question_type, marks, negative_marks,
+          explanation, numerical_answer, numerical_tolerance, numerical_tolerance_type,
+          numerical_unit, assertion_text, reason_text, matching_pairs, rubric,
+          allow_handwritten, allow_typed, image_url, ai_confidence, requires_verification,
+          order_index, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())
+        RETURNING id`,
+        [
+          testId,
+          qNum,
+          q.question_text,
+          q.question_type || 'mcq_single',
+          Number(q.marks) || 1,
+          Number(q.negative_marks) || 0,
+          q.explanation || '',
+          q.numerical_answer !== undefined && q.numerical_answer !== null
+            ? Number(q.numerical_answer)
+            : null,
+          q.numerical_tolerance !== undefined ? Number(q.numerical_tolerance) : 0,
+          q.numerical_tolerance_type || 'exact',
+          q.numerical_unit || null,
+          q.assertion_text || null,
+          q.reason_text || null,
+          q.matching_pairs ? JSON.stringify(q.matching_pairs) : null,
+          q.rubric ? JSON.stringify(q.rubric) : null,
+          q.allow_handwritten !== false,
+          q.allow_typed !== false,
+          q.image_url || null,
+          q.ai_confidence || 1.0,
+          Boolean(q.requires_verification),
+          i,
+        ]
+      );
 
-      db.questions.push(newQ);
+      const qId = qRes.rows[0].id;
 
-      // Save options if present
+      // Insert options if present
       if (q.options && Array.isArray(q.options)) {
         for (let j = 0; j < q.options.length; j++) {
           const opt = q.options[j];
-          db.question_options.push({
-            id: crypto.randomUUID(),
-            question_id: qId,
-            option_letter: opt.option_letter || String.fromCharCode(65 + j),
-            option_text: opt.option_text,
-            is_correct: Boolean(opt.is_correct),
-            order_index: j,
-          });
+          await query(
+            `INSERT INTO question_options (
+              question_id, option_letter, option_text, is_correct, order_index
+            ) VALUES ($1, $2, $3, $4, $5)`,
+            [
+              qId,
+              opt.option_letter || String.fromCharCode(65 + j),
+              opt.option_text,
+              Boolean(opt.is_correct),
+              j,
+            ]
+          );
         }
       }
     }
 
-    writeLocalDB(db);
-
     await logActivity(user.id, 'test_created', {
       test_id: testId,
-      title: newTest.title,
+      title: createdTest.title,
       question_count: questions.length,
-      mode: newTest.exam_mode,
-      status: newTest.status,
+      mode: createdTest.exam_mode,
+      status: createdTest.status,
     });
 
     return NextResponse.json({
       success: true,
       testId,
-      message: `Test "${newTest.title}" successfully saved with ${questions.length} questions!`,
+      message: `Test "${createdTest.title}" successfully saved with ${questions.length} questions!`,
     });
   } catch (error: any) {
     console.error('Create test error:', error);

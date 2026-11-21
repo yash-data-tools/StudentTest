@@ -16,11 +16,38 @@ import {
 
 export default async function AdminDashboardPage() {
   const user = await getCurrentUser();
-  const metrics = await getDashboardMetrics();
-  const recentLogs = await getActivityLogsList({ limit: 5 });
+  let metrics = {
+    totalStudents: 0,
+    activeStudents: 0,
+    pendingApprovalStudents: 0,
+    publishedTests: 0,
+    pendingReviews: 0,
+    totalAttempts: 0,
+  };
+  let recentLogs: any[] = [];
+  let dbError: string | null = null;
+
+  try {
+    metrics = await getDashboardMetrics();
+    recentLogs = await getActivityLogsList({ limit: 5 });
+  } catch (err: any) {
+    console.error('Failed to load dashboard metrics from database:', err);
+    dbError = err?.message || 'Database connection error';
+  }
 
   return (
     <div className="p-6 lg:p-8 max-w-7xl w-full mx-auto space-y-8">
+      {dbError && (
+        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3">
+          <div className="w-5 h-5 mt-0.5 text-amber-600 flex-shrink-0">⚠️</div>
+          <div>
+            <h3 className="font-bold text-sm">Database Connection Notice</h3>
+            <p className="text-xs mt-0.5 text-amber-700">
+              Could not retrieve live metrics from database: {dbError}. Please ensure DATABASE_URL is properly configured in your deployment settings.
+            </p>
+          </div>
+        </div>
+      )}
       {/* Welcome Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-200">
         <div>
